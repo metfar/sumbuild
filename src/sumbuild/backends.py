@@ -21,6 +21,7 @@
 #  
 """Host and Android build backends.""";
 from pathlib import Path;
+import os;
 import shutil;
 import subprocess;
 import sys;
@@ -136,6 +137,91 @@ def select_android_backend(project, requested="auto"):
     return "p4a";
 
 
+
+
+def _first_existing(paths):
+    for value in paths:
+        if not value: continue;
+        candidate=Path(os.path.expanduser(str(value))).resolve();
+        if candidate.exists(): return candidate;
+    return None;
+
+
+def _android_environment(project):
+    """Resolve a coherent Android toolchain without requiring shell exports.""";
+    settings=_android_settings(project);
+    android_api=int(settings.get("api",33));
+    ndk_api=int(settings.get("ndk_api",24));
+
+    sdk_candidates=[
+        settings.get("sdk_dir"),
+        os.environ.get("ANDROIDSDK"),
+        os.environ.get("ANDROID_HOME"),
+        os.environ.get("ANDROID_SDK_ROOT"),
+        Path.home() / "Android" / "Sdk",
+        Path.home() / ".buildozer" / "android" / "platform" / "android-sdk",
+        Path("/usr/lib/android-sdk"),
+    ];
+    sdk=None;
+    for raw in sdk_candidates:
+        if not raw: continue;
+        candidate=Path(os.path.expanduser(str(raw))).resolve();
+        if (candidate / "platforms" / "android-{}".format(android_api)).exists(): sdk=candidate; break;
+    if sdk is None: sdk=_first_existing(sdk_candidates);
+    if sdk is None:
+        raise BuildError("Android SDK not found. Set build.android.sdk_dir or install it under ~/Android/Sdk");
+    platform=sdk / "platforms" / "android-{}".format(android_api);
+    if not platform.exists():
+        raise BuildError("Android SDK {} does not contain platform android-{}".format(sdk,android_api));
+
+    ndk_candidates=[
+        settings.get("ndk_dir"),
+        os.environ.get("ANDROIDNDK"),
+        os.environ.get("ANDROID_NDK_HOME"),
+        Path.home() / ".buildozer" / "android" / "platform" / "android-ndk-r28c",
+        Path.home() / ".buildozer" / "android" / "platform" / "android-ndk-r25b",
+    ];
+    ndk_root=sdk / "ndk";
+    if ndk_root.exists():
+        ndk_candidates.extend(sorted([item for item in ndk_root.iterdir() if item.is_dir()],reverse=True));
+    ndk=_first_existing(ndk_candidates);
+    if ndk is None:
+        raise BuildError("Android NDK not found. Set build.android.ndk_dir or ANDROIDNDK");
+
+    java_candidates=[settings.get("java_home")];
+    current_java=os.environ.get("JAVA_HOME");
+    if current_java and "17" in Path(current_java).name: java_candidates.append(current_java);
+    java_candidates.extend([
+        Path("/usr/lib/jvm/java-17-openjdk-amd64"),
+        Path("/usr/lib/jvm/java-17-openjdk"),
+        current_java,
+    ]);
+    java_home=_first_existing(java_candidates);
+    if java_home is None:
+        raise BuildError("JDK not found. For the validated p4a/Gradle toolchain install JDK 17 or set build.android.java_home");
+
+    env=os.environ.copy();
+    env["ANDROIDSDK"]=str(sdk);
+    env["ANDROID_HOME"]=str(sdk);
+    env["ANDROID_SDK_ROOT"]=str(sdk);
+    env["ANDROIDNDK"]=str(ndk);
+    env["ANDROID_NDK_HOME"]=str(ndk);
+    env["ANDROIDAPI"]=str(android_api);
+    env["NDKAPI"]=str(ndk_api);
+    env["JAVA_HOME"]=str(java_home);
+    path_parts=[str(java_home / "bin"),str(sdk / "platform-tools")];
+    latest=sdk / "cmdline-tools" / "latest" / "bin";
+    if latest.exists(): path_parts.append(str(latest));
+    env["PATH"]=os.pathsep.join(path_parts + [env.get("PATH","")]);
+    summary={
+        "sdk":str(sdk),
+        "ndk":str(ndk),
+        "android_api":android_api,
+        "ndk_api":ndk_api,
+        "java_home":str(java_home),
+    };
+    return env,summary;
+
 def _stage_android(project, directory):
     _copy_payload(project, directory);
     entry=directory / project.entrypoint;
@@ -204,13 +290,16 @@ def _find_android_apk(directory, selected):
 def build_android(project, prepare_only=False, backend=None):
     project=project if isinstance(project, SumProject) else SumProject.load(project);
     directory,command,selected,stage=prepare_android(project,backend=backend,details=True);
-    if prepare_only: return {"staging":str(directory),"backend":selected,"transpile":stage,"command":command,"artifact":None};
+    env,toolchain=_android_environment(project);
+    if prepare_only: return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"transpile":stage,"command":command,"artifact":None};
     executable=command[0];
     if not shutil.which(executable): raise BuildError("{} not found; run sumbuild --doctor or use --prepare".format(executable));
-    subprocess.run(command,cwd=str(directory),check=True);
+    try: subprocess.run(command,cwd=str(directory),check=True,env=env);
+    except subprocess.CalledProcessError as exc:
+        raise BuildError("{} build failed with exit status {}".format(selected,exc.returncode)) from exc;
     apk=_find_android_apk(directory,selected);
     if apk is None: raise BuildError("{} finished but no APK was found in staging".format(selected));
     dist=project.root / "dist"; dist.mkdir(parents=True,exist_ok=True);
     target=dist / "{}-{}-{}.apk".format(project.name,project.version,"debug" if str(_android_settings(project).get("mode","debug")) == "debug" else "release");
     shutil.copy2(str(apk),str(target));
-    return {"staging":str(directory),"backend":selected,"transpile":stage,"command":command,"artifact":str(target)};
+    return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"transpile":stage,"command":command,"artifact":str(target)};

@@ -31,7 +31,9 @@
       "requirements": ["python3", "sdl2"],
       "arch": "arm64-v8a",
       "mode": "debug",
-      "package_domain": "org.sumecosystem"
+      "package_domain": "org.sumecosystem",
+      "api": 33,
+      "ndk_api": 24
     }
   }
 }
