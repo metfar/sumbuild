@@ -154,8 +154,6 @@ def project_from_main(path,name=None,target="host",backend=None,storage="auto"):
     target=str(target or "host").lower();
     storage=str(storage or "auto").lower();
     if storage not in ("auto","all-files","scoped","none"): raise ProjectError("storage expects auto, all-files, scoped, or none");
-    if language == "bash" and target == "android":
-        raise ProjectError("sumbash is active for Linux; Android shell execution is paused because /system/bin/sh is not a Bash/KornShell runtime");
     if storage == "auto": storage="all-files" if profile in ("sumide","sum-full","sumbasic","sumx","sumr") else "scoped";
     science=["numpy","pandas","matplotlib"];
     runtime_requirements={

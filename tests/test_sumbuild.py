@@ -319,7 +319,7 @@ def test_a24_sum_python_source_gets_full_sum_runtime(tmp_path):
     assert project.build["android"]["storage_access"] == "all-files";
 
 
-def test_a24_sumbash_shell_inference_is_linux_only(tmp_path):
+def test_a28_sumbash_shell_inference_linux_and_android(tmp_path):
     from sumbuild.project import infer_main_language, project_from_main, ProjectError;
     for name in ("hello.sh","hello.bash","hello.ksh"):
         path=tmp_path/name; path.write_text("echo hi\n",encoding="utf-8");
@@ -327,12 +327,9 @@ def test_a24_sumbash_shell_inference_is_linux_only(tmp_path):
         project=project_from_main(path,target="linux");
         assert project.language == "bash";
         assert project.build["host"]["bundle"] == "sum-full";
-    try:
-        project_from_main(tmp_path/"hello.sh",target="android");
-    except ProjectError as exc:
-        assert "sumbash" in str(exc).lower();
-    else:
-        raise AssertionError("Android Bash should remain paused");
+    android=project_from_main(tmp_path/"hello.sh",target="android");
+    assert android.language == "bash";
+    assert android.build["android"]["runtime"] == "bash";
 
 
 def test_a24_android_audio_is_lazy_at_application_start():
@@ -417,7 +414,7 @@ def test_a26_p4a_profile_changes_with_requirements(tmp_path,monkeypatch):
     assert p1 != p2;
 
 
-def test_a27_numpy_uses_pinned_builtin_recipe(tmp_path):
+def test_a28_numpy_uses_tag_safe_recipe_override(tmp_path):
     import json;
     from sumbuild.backends import prepare_android;
     main=tmp_path/"main.py"; main.write_text("import numpy\n",encoding="utf-8");
@@ -427,7 +424,8 @@ def test_a27_numpy_uses_pinned_builtin_recipe(tmp_path):
     requirements=next(item for item in command if item.startswith("--requirements="));
     assert "python3==3.13.13" in requirements;
     assert "hostpython3==3.13.13" in requirements;
-    assert "numpy==2.2.3" in requirements;
+    assert ",numpy" in requirements or requirements.endswith("numpy");
+    assert "numpy==2.2.3" not in requirements;
     assert not any(item.startswith("--local-recipes=") for item in command);
 
 def test_a26_p4a_transient_venv_uses_profile_storage(tmp_path):
@@ -470,7 +468,7 @@ def test_a26_profile_lock_rejects_live_owner_and_recovers_stale(tmp_path,monkeyp
     assert not second.exists();
 
 
-def test_a27_android_science_matrix_is_pinned(tmp_path):
+def test_a28_android_science_matrix_is_tag_safe(tmp_path):
     import json;
     main=tmp_path/"main.py"; main.write_text("print(1)\n",encoding="utf-8");
     manifest=tmp_path/"project.sum";
@@ -479,22 +477,44 @@ def test_a27_android_science_matrix_is_pinned(tmp_path):
     requirements=next(item for item in command if item.startswith("--requirements="));
     assert "python3==3.13.13" in requirements;
     assert "hostpython3==3.13.13" in requirements;
-    assert "numpy==2.2.3" in requirements;
-    assert "pandas==2.2.3" in requirements;
-    assert "matplotlib==3.10.1" in requirements;
+    assert "numpy==2.2.3" not in requirements;
+    assert "pandas==2.2.3" not in requirements;
+    assert "matplotlib==3.10.1" not in requirements;
+    assert "numpy" in requirements and "pandas" in requirements and "matplotlib" in requirements;
     assert not any(item.startswith("--local-recipes=") for item in command);
 
 
-def test_a27_full_runtime_core_requirements_are_re_pinned():
+def test_a28_full_runtime_core_requirements_keep_git_recipes_unversioned():
     import sumbuild.backends as backends;
     requirements=backends._pin_android_runtime_requirements(backends.SUM_ANDROID_CORE_REQUIREMENTS);
     assert "python3==3.13.13" in requirements;
     assert "hostpython3==3.13.13" in requirements;
-    assert "numpy==2.2.3" in requirements;
-    assert "pandas==2.2.3" in requirements;
-    assert "matplotlib==3.10.1" in requirements;
+    assert "numpy" in requirements;
+    assert "pandas" in requirements;
+    assert "matplotlib" in requirements;
+    assert "numpy==2.2.3" not in requirements;
+    assert "pandas==2.2.3" not in requirements;
 
 
-def test_a27_profile_revision_differs_from_a26():
+def test_a28_profile_revision_and_recipe_tag_overrides():
     from sumbuild.backends import SUM_P4A_PROFILE_REVISION;
-    assert SUM_P4A_PROFILE_REVISION.startswith("a27-");
+    assert SUM_P4A_PROFILE_REVISION.startswith("a28-");
+    import sumbuild.backends as backends;
+    overrides=backends._android_recipe_version_overrides();
+    assert overrides["VERSION_numpy"] == "v2.2.3";
+    assert overrides["VERSION_pandas"] == "v2.2.3";
+    assert overrides["VERSION_matplotlib"] == "3.10.1";
+
+
+
+def test_a28_android_sumbash_patches_system_sh(tmp_path):
+    import sumbuild.backends as backends;
+    vendor=tmp_path/"vendor"; package=vendor/"sumide"; package.mkdir(parents=True);
+    (package/"profiles.py").write_text('"bash": LanguageProfile("bash", "Bash", (".sh", ".bash"), syntax="bash", runner=("bash", "{source}"), aliases=("sh", "shell")),\n',encoding="utf-8");
+    (package/"app.py").write_text('completed = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", check=False);\n',encoding="utf-8");
+    assert backends._patch_android_sumide_shell(vendor) is True;
+    profiles=(package/"profiles.py").read_text(encoding="utf-8");
+    app=(package/"app.py").read_text(encoding="utf-8");
+    assert 'runner=("/system/bin/sh", "{source}")' in profiles;
+    assert '".ksh"' in profiles;
+    assert 'executable=("/system/bin/sh" if os.environ.get("SUM_ANDROID") == "1" else None)' in app;

@@ -1,2 +1,2 @@
-#!/usr/bin/env bash
-printf 'Hello from Bash in sumIDE\n'
+#!/usr/bin/env sh
+printf 'Hello from sumbash / portable sh\n'

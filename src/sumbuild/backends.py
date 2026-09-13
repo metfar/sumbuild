@@ -53,7 +53,7 @@ SUM_ANDROID_PYTHON_VERSION="3.13.13";
 SUM_ANDROID_NUMPY_VERSION="2.2.3";
 SUM_ANDROID_PANDAS_VERSION="2.2.3";
 SUM_ANDROID_MATPLOTLIB_VERSION="3.10.1";
-SUM_P4A_PROFILE_REVISION="a27-android-science-pydroid-matrix-1";
+SUM_P4A_PROFILE_REVISION="a28-android-science-tagfix-shell-1";
 
 SUM_ANDROID_CORE_REQUIREMENTS=(
     "python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify",
@@ -249,19 +249,36 @@ def _android_requirement_name(value):
     return text[:stop];
 
 
-def _pin_android_runtime_requirements(values):
-    """Pin the Android scientific runtime to the known-good SUM matrix.
+def _android_recipe_version_overrides():
+    """p4a recipe versions that need their upstream tag spelling preserved.""";
+    return {
+        "VERSION_numpy":"v{}".format(SUM_ANDROID_NUMPY_VERSION),
+        "VERSION_pandas":"v{}".format(SUM_ANDROID_PANDAS_VERSION),
+        "VERSION_matplotlib":SUM_ANDROID_MATPLOTLIB_VERSION,
+    };
 
-    Linux remains unconstrained.  Android deliberately tracks the versions
-    validated together on-device (Python 3.13.13, NumPy/pandas 2.2.3 and
-    Matplotlib 3.10.1) instead of p4a's newest recipe defaults.
+
+def _apply_android_recipe_versions(env):
+    result=dict(env);
+    for key,value in _android_recipe_version_overrides().items(): result[key]=value;
+    return result;
+
+
+def _pin_android_runtime_requirements(values):
+    """Pin Python while preserving git recipe tag spelling for science libs.
+
+    p4a correctly accepts ``python3==3.13.13`` because the CPython recipe URL
+    supplies the leading ``v`` itself.  NumPy and pandas are git recipes whose
+    upstream tags are ``v2.2.3``; passing ``numpy==2.2.3`` makes p4a literally
+    execute ``git checkout 2.2.3`` and fail.  Keep those requirement names
+    unversioned and inject the exact recipe versions through VERSION_* env vars.
     """;
     pins={
         "python3":"python3=={}".format(SUM_ANDROID_PYTHON_VERSION),
         "hostpython3":"hostpython3=={}".format(SUM_ANDROID_PYTHON_VERSION),
-        "numpy":"numpy=={}".format(SUM_ANDROID_NUMPY_VERSION),
-        "pandas":"pandas=={}".format(SUM_ANDROID_PANDAS_VERSION),
-        "matplotlib":"matplotlib=={}".format(SUM_ANDROID_MATPLOTLIB_VERSION),
+        "numpy":"numpy",
+        "pandas":"pandas",
+        "matplotlib":"matplotlib",
     };
     result=[];
     for item in values:
@@ -516,6 +533,32 @@ def _stage_python_sum_runtime(project,directory):
     return {"runtime":runtime,"packages":packages,"adapter":adapter,"storage_root":"/storage/emulated/0"};
 
 
+def _patch_android_sumide_shell(vendor):
+    """Run the SUM shell profile through Android's guaranteed system sh.
+
+    The profile remains the common ``sumbash`` editor/IDE surface.  Android
+    does not guarantee a separate /bin/bash or ksh binary, but it does provide
+    /system/bin/sh.  This makes portable .sh sources executable while keeping
+    the editor/profile common with Linux.
+    """;
+    vendor=Path(vendor); changed=False;
+    profiles=vendor / "sumide" / "profiles.py";
+    if profiles.exists():
+        text=profiles.read_text(encoding="utf-8");
+        old='"bash": LanguageProfile("bash", "Bash", (".sh", ".bash"), syntax="bash", runner=("bash", "{source}"), aliases=("sh", "shell")),';
+        new='"bash": LanguageProfile("bash", "Bash / shell", (".sh", ".bash", ".ksh"), syntax="bash", runner=("/system/bin/sh", "{source}"), aliases=("sh", "shell", "ksh")),';
+        if old in text:
+            profiles.write_text(text.replace(old,new,1),encoding="utf-8"); changed=True;
+    app=vendor / "sumide" / "app.py";
+    if app.exists():
+        text=app.read_text(encoding="utf-8");
+        old='completed = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", check=False);';
+        new='completed = subprocess.run(command, shell=True, executable=("/system/bin/sh" if os.environ.get("SUM_ANDROID") == "1" else None), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", check=False);';
+        if old in text:
+            app.write_text(text.replace(old,new),encoding="utf-8"); changed=True;
+    return changed;
+
+
 def _stage_sum_ecosystem(vendor, required=()):
     """Vendor the installed SUM runtime ecosystem into an Android APK.""";
     vendor=Path(vendor); vendor.mkdir(parents=True,exist_ok=True);
@@ -543,6 +586,7 @@ def _stage_sum_ecosystem(vendor, required=()):
     _patch_android_sumtui_storage(vendor);
     _patch_android_sumbasic_frontend(vendor);
     _patch_android_sumcore_audio(vendor);
+    _patch_android_sumide_shell(vendor);
     return copied;
 
 
@@ -553,6 +597,7 @@ def _stage_language_runtime(project,directory):
         "sumbasic":(("sumbasic","sumui","sumtui","sumide","sumkeyboard"),"main_basic"),
         "sumx":(("sumx","sumui","sumtui","sumide","sumkeyboard"),"main_xbase"),
         "sumr":(("sumr","sumui","sumtui","sumide"),"main_r"),
+        "bash":(("sumui","sumtui","sumide"),"main_bash"),
     };
     if language not in bundles: raise BuildError("Android runtime adapter is not defined for language={}".format(language));
     required,entry_func=bundles[language];
@@ -672,7 +717,8 @@ def _p4a_profile_storage(project, requirements, arch):
     api=str(settings.get("api",os.environ.get("ANDROIDAPI",33)));
     ndk_api=str(settings.get("ndk_api",os.environ.get("NDKAPI",24)));
     normalized=sorted(_canonical_android_requirement(item) for item in requirements);
-    payload="|".join((SUM_P4A_PROFILE_REVISION,"api="+api,"ndkapi="+ndk_api,"arch="+str(arch),"requirements="+",".join(normalized)));
+    matrix=",".join("{}={}".format(key,value) for key,value in sorted(_android_recipe_version_overrides().items()));
+    payload="|".join((SUM_P4A_PROFILE_REVISION,"api="+api,"ndkapi="+ndk_api,"arch="+str(arch),"requirements="+",".join(normalized),"recipe_versions="+matrix));
     digest=hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16];
     return (Path.home() / ".cache" / "sumbuild" / "p4a" / digest).resolve();
 
@@ -884,7 +930,8 @@ def build_android(project, prepare_only=False, backend=None):
     project=project if isinstance(project, SumProject) else SumProject.load(project);
     directory,command,selected,stage=prepare_android(project,backend=backend,details=True);
     env,toolchain=_android_environment(project);
-    if prepare_only: return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"transpile":stage,"command":command,"artifact":None};
+    env=_apply_android_recipe_versions(env);
+    if prepare_only: return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"recipe_versions":_android_recipe_version_overrides(),"transpile":stage,"command":command,"artifact":None};
     executable=command[0];
     if not shutil.which(executable): raise BuildError("{} not found; run sumbuild --doctor or use --prepare".format(executable));
     p4a_venv=None; p4a_storage=None; p4a_git_locks_removed=[]; p4a_profile_lock=None;
@@ -907,4 +954,4 @@ def build_android(project, prepare_only=False, backend=None):
     dist=project.root / "dist"; dist.mkdir(parents=True,exist_ok=True);
     target=dist / "{}-{}-{}.apk".format(project.name,project.version,"debug" if str(_android_settings(project).get("mode","debug")) == "debug" else "release");
     shutil.copy2(str(apk),str(target));
-    return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"p4a_storage":str(p4a_storage) if p4a_storage is not None else None,"p4a_venv":p4a_venv,"p4a_git_locks_removed":p4a_git_locks_removed,"transpile":stage,"command":command,"artifact":str(target)};
+    return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"recipe_versions":_android_recipe_version_overrides(),"p4a_storage":str(p4a_storage) if p4a_storage is not None else None,"p4a_venv":p4a_venv,"p4a_git_locks_removed":p4a_git_locks_removed,"transpile":stage,"command":command,"artifact":str(target)};
