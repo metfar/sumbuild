@@ -231,6 +231,9 @@ class GraphicalApplicationBackend:
         self.keyboard_reserve=keyboard.get("reserve","auto") if isinstance(keyboard,dict) else "auto";
         self.keyboard_accessory=keyboard.get("accessory","auto") if isinstance(keyboard,dict) else "auto";
         self.keyboard_profile=keyboard.get("profile","keybar") if isinstance(keyboard,dict) else "keybar";
+        raw_button_height=keyboard.get("accessory_button_height","auto") if isinstance(keyboard,dict) else "auto";
+        try: self.accessory_button_height=max(56,int(raw_button_height));
+        except (TypeError,ValueError): self.accessory_button_height=92;
         self._accessory_page="nav"; self._latched_ctrl=False; self._latched_alt=False;
         self._accessory_hitboxes=[]; self._content_bottom=self.height-self.overlay_height;
         self._accessory_profile=None;
@@ -253,7 +256,8 @@ class GraphicalApplicationBackend:
         if not self.renderer: raise RuntimeError("SDL_CreateRenderer: "+self.sdl.SDL_GetError().decode("utf-8","replace"));
         self.font,self.font_path,self.border_font,self.border_font_path=_choose_fonts(self.ttf,self.font_size);
         w=ctypes.c_int(); h=ctypes.c_int(); self.ttf.TTF_SizeUTF8(self.font,b"M",ctypes.byref(w),ctypes.byref(h));
-        self.cell_width=max(7,int(w.value)); self.cell_height=max(12,int(h.value)+3); self.overlay_height=max(112,self.cell_height*2+34);
+        self.cell_width=max(7,int(w.value)); self.cell_height=max(12,int(h.value)+3);
+        self.overlay_height=max(112,self.accessory_button_height*2+22);
         self.sdl.SDL_StopTextInput(); self._keyboard_visible=False;
         self._resize();
 
@@ -337,7 +341,7 @@ class GraphicalApplicationBackend:
 
     def _overlay(self):
         y=self._content_bottom-self.overlay_height; self._fill(0,y,self.width,self.overlay_height,(18,18,24));
-        self._accessory_hitboxes=[]; rows=self._accessory_rows(); gap=4; pad=6; row_h=max(42,(self.overlay_height-pad*2-gap)//2);
+        self._accessory_hitboxes=[]; rows=self._accessory_rows(); gap=6; pad=8; row_h=max(self.accessory_button_height,(self.overlay_height-pad*2-gap)//2);
         for row_index,row in enumerate(rows):
             count=max(1,len(row)); available=self.width-pad*2-gap*(count-1); button_w=max(42,available//count);
             yy=y+pad+row_index*(row_h+gap); x=pad;
