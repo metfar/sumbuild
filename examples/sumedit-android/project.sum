@@ -5,8 +5,7 @@
   "language": "python",
   "entrypoint": "main.py",
   "sources": [
-    "main.py",
-    "vendor"
+    "main.py"
   ],
   "resources": [
     "sample.txt"
@@ -61,7 +60,7 @@
       "backend": "p4a",
       "package_name": "sumedit",
       "package_domain": "org.sumecosystem",
-      "runtime": "sum-sdl2",
+      "runtime": "sum-full",
       "api": 33,
       "ndk_api": 24,
       "arch": "arm64-v8a",
@@ -71,7 +70,9 @@
         "rich",
         "pygments",
         "markdown-it-py",
-        "mdurl"
+        "mdurl",
+        "markdown",
+        "markdownify"
       ],
       "permissions": [
         "android.permission.MANAGE_EXTERNAL_STORAGE",

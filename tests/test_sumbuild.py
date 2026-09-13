@@ -87,7 +87,7 @@ def test_android_accessory_repeat_contract():
     project=json.loads((root/'examples'/'sumedit-android'/'project.sum').read_text())
     repeat=project['interface']['keyboard']['repeat']
     assert repeat == {'enabled': True, 'delay_ms': 400, 'interval_ms': 55}
-    source=(root/'examples'/'sumedit-android'/'vendor'/'sumgui'/'application_backend.py').read_text()
+    source=(root/'src'/'sumbuild'/'android_runtime'/'sumgui_application_backend.py').read_text()
     ast.parse(source)
     assert 'action="repeat"' in source
     assert 'def _process_accessory_repeat(self):' in source
@@ -227,3 +227,34 @@ def test_p4a_transient_venv_is_always_reset(tmp_path,monkeypatch):
     status=backends._reset_p4a_transient_venv({});
     assert status["reset"] is True;
     assert not venv.exists();
+
+
+def test_sumbuild_ships_basic_runtime_examples():
+    root=Path(__file__).resolve().parents[1];
+    assert (root/"examples"/"hello.bas").exists();
+    assert (root/"examples"/"sound.bas").exists();
+    assert "BEEP" in (root/"examples"/"sound.bas").read_text(encoding="utf-8");
+
+
+def test_sumedit_uses_fresh_full_runtime_not_vendored_snapshot():
+    import json;
+    root=Path(__file__).resolve().parents[1];
+    project=json.loads((root/"examples"/"sumedit-android"/"project.sum").read_text(encoding="utf-8"));
+    assert project["build"]["android"]["runtime"] == "sum-full";
+    assert "vendor" not in project["sources"];
+    assert not (root/"examples"/"sumedit-android"/"vendor").exists();
+
+
+def test_android_sdl2_services_never_import_ctypes_util_at_module_load():
+    root=Path(__file__).resolve().parents[1];
+    source=(root/"src"/"sumbuild"/"android_runtime"/"sdl2_services.py").read_text(encoding="utf-8");
+    first=source.split("def _load_library",1)[0];
+    assert "import ctypes.util" not in first;
+    assert 'is_android=' in source;
+
+
+def test_language_runtime_requires_complete_sum_ecosystem():
+    root=Path(__file__).resolve().parents[1];
+    source=(root/"src"/"sumbuild"/"backends.py").read_text(encoding="utf-8");
+    assert "required=SUM_ANDROID_ECOSYSTEM_PACKAGES" in source;
+    assert "sum-full-app" in source;

@@ -1,4 +1,6 @@
-# sumBuild 0.1.0a2
+# sumBuild
+
+See `README-a22.md` for the full-runtime Android policy and bundled BASIC smoke examples. 0.1.0a2
 
 Project/build layer for the SUM ecosystem.
 

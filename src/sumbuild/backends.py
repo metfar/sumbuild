@@ -349,8 +349,11 @@ def _stage_python_sum_runtime(project,directory):
     runtime=str(settings.get("runtime","") or "").strip().lower();
     if project.language != "python" or runtime not in ("sumide","sum-runtime","sum-full"): return None;
     vendor=Path(directory) / "vendor";
-    packages=_stage_sum_ecosystem(vendor,required=("sumide","sumui","sumtui","sumgui"));
-    wrapper=(
+    # Development/runtime APKs deliberately carry the complete SUM ecosystem.
+    # These applications can edit code after packaging, so static import scanning
+    # is not a valid basis for pruning libraries.
+    packages=_stage_sum_ecosystem(vendor,required=SUM_ANDROID_ECOSYSTEM_PACKAGES);
+    common=(
         'import os,sys;\n'
         'from pathlib import Path;\n'
         'ROOT=Path(__file__).resolve().parent; VENDOR=ROOT / "vendor";\n'
@@ -358,11 +361,20 @@ def _stage_python_sum_runtime(project,directory):
         'os.environ["PYTHONPATH"]=str(VENDOR)+(os.pathsep+os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else "");\n'
         'os.environ.setdefault("SUM_STORAGE_ROOT","/storage/emulated/0");\n'
         'os.environ.setdefault("SUM_ANDROID","1"); os.environ.setdefault("SUM_GUI_BACKEND","sdl2"); os.environ.setdefault("SUM_AUDIO_BACKEND","sdl2");\n'
-        'from sumide.app import main;\n'
-        'raise SystemExit(main(["--gui"]));\n'
     );
+    if runtime == "sumide":
+        wrapper=common + 'from sumide.app import main;\nraise SystemExit(main(["--gui"]));\n';
+        adapter="sumide-gui";
+    else:
+        entry=Path(directory) / project.entrypoint;
+        staged_name=project.entrypoint;
+        if project.entrypoint == "main.py":
+            staged_name="_sum_app_main.py";
+            shutil.copy2(str(entry),str(Path(directory) / staged_name));
+        wrapper=(common + 'import runpy;\nrunpy.run_path(str(ROOT / {entry!r}), run_name="__main__");\n').format(entry=staged_name);
+        adapter="sum-full-app";
     (Path(directory) / "main.py").write_text(wrapper,encoding="utf-8");
-    return {"runtime":"sumide","packages":packages,"adapter":"sumide-gui","storage_root":"/storage/emulated/0"};
+    return {"runtime":runtime,"packages":packages,"adapter":adapter,"storage_root":"/storage/emulated/0"};
 
 
 def _stage_sum_ecosystem(vendor, required=()):
@@ -405,7 +417,9 @@ def _stage_language_runtime(project,directory):
     if language not in bundles: raise BuildError("Android runtime adapter is not defined for language={}".format(language));
     required,entry_func=bundles[language];
     vendor=Path(directory) / "vendor";
-    packages=_stage_sum_ecosystem(vendor,required=required);
+    # Language APKs are editable development environments: bundle every SUM
+    # package, not only what the original source happens to reference.
+    packages=_stage_sum_ecosystem(vendor,required=SUM_ANDROID_ECOSYSTEM_PACKAGES);
     source=project.entrypoint;
     wrapper=(
         'import os,sys;\n'
@@ -415,7 +429,7 @@ def _stage_language_runtime(project,directory):
         'sys.path.insert(0,str(VENDOR));\n'
         'os.environ["PYTHONPATH"]=str(VENDOR)+(os.pathsep+os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else "");\n'
         'os.environ.setdefault("SUM_STORAGE_ROOT","/storage/emulated/0");\n'
-        'os.environ.setdefault("SUM_ANDROID","1");\n'
+        'os.environ.setdefault("SUM_ANDROID","1"); os.environ.setdefault("SUM_GUI_BACKEND","sdl2"); os.environ.setdefault("SUM_AUDIO_BACKEND","sdl2");\n'
         'from sumide.app import {func};\n'
         'raise SystemExit({func}(["--gui","--run",str(ROOT / {src!r})]));\n'
     ).format(func=entry_func,src=source);
