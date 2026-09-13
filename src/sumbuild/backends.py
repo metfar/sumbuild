@@ -37,6 +37,16 @@ class BuildError(RuntimeError):
     pass;
 
 
+SUM_ANDROID_ECOSYSTEM_PACKAGES=(
+    "sumcore","sumdata","sumplot","sumr","sumpy","sumui","sumtui",
+    "sumgui","sumide","sumbasic","sumx","sumdiff","sumdoc","sumkeyboard",
+);
+
+SUM_ANDROID_CORE_REQUIREMENTS=(
+    "python3","sdl2","rich","pygments","markdown-it-py","mdurl","Markdown","markdownify",
+);
+
+
 def _copy_payload(project, staging):
     staging=Path(staging); staging.mkdir(parents=True, exist_ok=True);
     for source, rel in project.iter_payload_paths():
@@ -259,37 +269,137 @@ def _copy_import_package(name,destination):
     target=Path(destination) / (name + ".py"); shutil.copy2(str(spec.origin),str(target)); return target;
 
 
+def _patch_android_sumtui_storage(vendor):
+    """Make Open/Save As start in shared storage for Android development apps.""";
+    edit=Path(vendor) / "sumtui" / "tools" / "edit.py";
+    if not edit.exists(): return False;
+    text=edit.read_text(encoding="utf-8");
+    marker='_EOL_MARKERS = {"\\n": "↵", "\\r\\n": "⏎", "\\r": "↩"};';
+    helper=(
+        '\n\ndef _sum_storage_start(path=None, fallback_name="untitled.txt"):\n'
+        '    # Prefer Android shared storage for Open/Save As.\n'
+        '    raw=os.environ.get("SUM_STORAGE_ROOT","").strip();\n'
+        '    root=Path(raw).expanduser() if raw else None;\n'
+        '    current=Path(path).expanduser() if path is not None else None;\n'
+        '    if root is not None and root.is_dir():\n'
+        '        if current is not None:\n'
+        '            try:\n'
+        '                current.resolve().relative_to(root.resolve());\n'
+        '                return current.parent if current.suffix else current;\n'
+        '            except (OSError,ValueError):\n'
+        '                pass;\n'
+        '        return root / fallback_name if fallback_name else root;\n'
+        '    if current is not None: return current.parent if current.suffix else current;\n'
+        '    return Path.cwd() / fallback_name if fallback_name else Path.cwd();\n'
+    );
+    if '_sum_storage_start(' not in text:
+        if marker not in text: return False;
+        text=text.replace(marker,marker+helper,1);
+    text=text.replace('start = self.document.path.parent if self.document.path is not None else Path.cwd();','start = _sum_storage_start(self.document.path, fallback_name=None);');
+    text=text.replace('default = str(self.document.path or Path.cwd() / "untitled.txt");','default = str(self.document.path or _sum_storage_start(None, fallback_name="untitled.txt"));');
+    edit.write_text(text,encoding="utf-8");
+    return True;
+
+
+
+def _patch_android_sumcore_audio(vendor):
+    """Route finite SUM tones through SDL2 queued audio inside packaged apps.""";
+    audio=Path(vendor) / "sumcore" / "audio.py";
+    if not audio.exists(): return False;
+    text=audio.read_text(encoding="utf-8");
+    if "SUM_AUDIO_BACKEND" not in text:
+        marker='    def _play_blocking(self, frequency, duration, volume=1.0):\n';
+        injection=(
+            '    def _play_blocking(self, frequency, duration, volume=1.0):\n'
+            '        if os.environ.get("SUM_AUDIO_BACKEND", "").strip().lower() == "sdl2":\n'
+            '            try:\n'
+            '                from sumgui.sdl2_services import play_tone;\n'
+            '                return bool(play_tone(frequency, duration, blocking=True, volume=volume));\n'
+            '            except Exception:\n'
+            '                pass;\n'
+        );
+        if marker in text: text=text.replace(marker,injection,1);
+    audio.write_text(text,encoding="utf-8");
+    return True;
+
+
+def _stage_python_sum_runtime(project,directory):
+    settings=_android_settings(project);
+    runtime=str(settings.get("runtime","") or "").strip().lower();
+    if project.language != "python" or runtime not in ("sumide","sum-runtime","sum-full"): return None;
+    vendor=Path(directory) / "vendor";
+    packages=_stage_sum_ecosystem(vendor,required=("sumide","sumui","sumtui","sumgui"));
+    wrapper=(
+        'import os,sys;\n'
+        'from pathlib import Path;\n'
+        'ROOT=Path(__file__).resolve().parent; VENDOR=ROOT / "vendor";\n'
+        'sys.path.insert(0,str(VENDOR));\n'
+        'os.environ["PYTHONPATH"]=str(VENDOR)+(os.pathsep+os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else "");\n'
+        'os.environ.setdefault("SUM_STORAGE_ROOT","/storage/emulated/0");\n'
+        'os.environ.setdefault("SUM_ANDROID","1"); os.environ.setdefault("SUM_GUI_BACKEND","sdl2"); os.environ.setdefault("SUM_AUDIO_BACKEND","sdl2");\n'
+        'from sumide.app import main;\n'
+        'raise SystemExit(main(["--gui"]));\n'
+    );
+    (Path(directory) / "main.py").write_text(wrapper,encoding="utf-8");
+    return {"runtime":"sumide","packages":packages,"adapter":"sumide-gui","storage_root":"/storage/emulated/0"};
+
+
+def _stage_sum_ecosystem(vendor, required=()):
+    """Vendor the installed SUM runtime ecosystem into an Android APK.""";
+    vendor=Path(vendor); vendor.mkdir(parents=True,exist_ok=True);
+    copied=[]; missing=[];
+    required=set(required);
+    for package in SUM_ANDROID_ECOSYSTEM_PACKAGES:
+        try:
+            _copy_import_package(package,vendor); copied.append(package);
+        except BuildError:
+            if package in required: missing.append(package);
+    if missing:
+        raise BuildError("required SUM runtime packages are not installed: {}".format(", ".join(sorted(missing))));
+    # Keep the full sumGUI tree for resources/modules, but route the application
+    # presentation through the validated ctypes/SDL2 backend on Android.
+    template=Path(__file__).resolve().parent / "android_runtime" / "sumgui_application_backend.py";
+    gui=vendor / "sumgui";
+    if template.exists():
+        gui.mkdir(parents=True,exist_ok=True);
+        init=gui / "__init__.py";
+        if init.exists(): shutil.copy2(str(init),str(gui / "__init__.desktop.py"));
+        init.write_text('from .application_backend import *;\n',encoding="utf-8");
+        shutil.copy2(str(template),str(gui / "application_backend.py"));
+        services=Path(__file__).resolve().parent / "android_runtime" / "sdl2_services.py";
+        if services.exists(): shutil.copy2(str(services),str(gui / "sdl2_services.py"));
+    _patch_android_sumtui_storage(vendor);
+    _patch_android_sumcore_audio(vendor);
+    return copied;
+
+
 def _stage_language_runtime(project,directory):
     language=project.language;
     if language == "python": return None;
     bundles={
-        "sumbasic":(["sumbasic","sumui","sumtui","sumide","sumkeyboard"],"main_basic"),
-        "sumx":(["sumx","sumui","sumtui","sumide","sumkeyboard"],"main_xbase"),
-        "sumr":(["sumr","sumui","sumtui","sumide"],"main_r"),
+        "sumbasic":(("sumbasic","sumui","sumtui","sumide","sumkeyboard"),"main_basic"),
+        "sumx":(("sumx","sumui","sumtui","sumide","sumkeyboard"),"main_xbase"),
+        "sumr":(("sumr","sumui","sumtui","sumide"),"main_r"),
     };
     if language not in bundles: raise BuildError("Android runtime adapter is not defined for language={}".format(language));
-    packages,entry_func=bundles[language];
-    vendor=Path(directory) / "vendor"; vendor.mkdir(parents=True,exist_ok=True);
-    for package in packages: _copy_import_package(package,vendor);
-    # Use the already validated ctypes/SDL application backend rather than the
-    # desktop Pygame implementation whenever sumIDE/sumTUI requests sumGUI.
-    template=Path(__file__).resolve().parent / "android_runtime" / "sumgui_application_backend.py";
-    if template.exists():
-        gui=vendor / "sumgui"; gui.mkdir(parents=True,exist_ok=True);
-        init=gui / "__init__.py";
-        if not init.exists(): init.write_text('from .application_backend import *;\n',encoding="utf-8");
-        shutil.copy2(str(template),str(gui / "application_backend.py"));
+    required,entry_func=bundles[language];
+    vendor=Path(directory) / "vendor";
+    packages=_stage_sum_ecosystem(vendor,required=required);
     source=project.entrypoint;
     wrapper=(
-        'import sys;\n'
+        'import os,sys;\n'
         'from pathlib import Path;\n'
         'ROOT=Path(__file__).resolve().parent;\n'
-        'sys.path.insert(0,str(ROOT / "vendor"));\n'
+        'VENDOR=ROOT / "vendor";\n'
+        'sys.path.insert(0,str(VENDOR));\n'
+        'os.environ["PYTHONPATH"]=str(VENDOR)+(os.pathsep+os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else "");\n'
+        'os.environ.setdefault("SUM_STORAGE_ROOT","/storage/emulated/0");\n'
+        'os.environ.setdefault("SUM_ANDROID","1");\n'
         'from sumide.app import {func};\n'
         'raise SystemExit({func}(["--gui","--run",str(ROOT / {src!r})]));\n'
     ).format(func=entry_func,src=source);
     (Path(directory) / "main.py").write_text(wrapper,encoding="utf-8");
-    return {"runtime":language,"packages":packages,"adapter":"sumide-gui-run"};
+    return {"runtime":language,"packages":packages,"adapter":"sumide-gui-run","storage_root":"/storage/emulated/0"};
 
 
 def _stage_android(project, directory):
@@ -297,7 +407,8 @@ def _stage_android(project, directory):
     entry=directory / project.entrypoint;
     if not entry.exists(): raise BuildError("entrypoint not staged: {}".format(project.entrypoint));
     settings=_android_settings(project);
-    runtime_stage=_stage_language_runtime(project,directory);
+    runtime_stage=_stage_python_sum_runtime(project,directory);
+    if runtime_stage is None: runtime_stage=_stage_language_runtime(project,directory);
     if runtime_stage is not None: return {"transpiled":True,"transpiler":"sum-runtime-adapter","source":str(entry),"runtime":runtime_stage};
     mode=str(settings.get("transpile","")).strip().lower();
     backend=str(project.interface.get("backend","")).strip().lower();
@@ -390,6 +501,9 @@ def prepare_android(project, directory=None, backend=None, details=False):
     mode=str(settings.get("mode","debug")).lower();
     arch=str(settings.get("arch","arm64-v8a"));
     requirements=_android_requirements(project);
+    if project.language in ("sumbasic","sumx","sumr") or str(settings.get("runtime","")).lower() in ("sumide","sum-runtime","sum-full"):
+        for item in SUM_ANDROID_CORE_REQUIREMENTS:
+            if item not in requirements: requirements.append(item);
     permissions=_android_permissions(project);
     icon=_android_icon(project,directory);
     runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"icon":"sum" if icon and icon.name == "sum-default-icon.png" else (str(icon.name) if icon else None),"font_size":project.interface.get("font_size","auto"),"font_auto":project.interface.get("font_auto",{}),"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto"}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"exit_button":project.interface.get("exit_button","auto"),"transpile":stage};

@@ -123,3 +123,63 @@ def test_android_all_files_permission_profile(tmp_path):
     assert "--permission=android.permission.MANAGE_EXTERNAL_STORAGE" in command;
     assert "--permission=(name=android.permission.READ_EXTERNAL_STORAGE;maxSdkVersion=32)" in command;
     assert "--permission=(name=android.permission.WRITE_EXTERNAL_STORAGE;maxSdkVersion=28)" in command;
+
+
+def test_android_runtime_wrapper_exports_vendor_pythonpath():
+    from pathlib import Path;
+    source=(Path(__file__).resolve().parents[1]/"src"/"sumbuild"/"backends.py").read_text(encoding="utf-8");
+    assert 'os.environ["PYTHONPATH"]' in source;
+    assert 'SUM_STORAGE_ROOT' in source;
+    assert '"--gui","--run"' in source;
+
+
+def test_android_runtime_bundles_sum_ecosystem():
+    from sumbuild.backends import SUM_ANDROID_ECOSYSTEM_PACKAGES, SUM_ANDROID_CORE_REQUIREMENTS;
+    for name in ("sumcore","sumui","sumtui","sumgui","sumide","sumbasic","sumx","sumr","sumpy","sumdata","sumplot","sumkeyboard"):
+        assert name in SUM_ANDROID_ECOSYSTEM_PACKAGES;
+    for name in ("python3","sdl2","rich","pygments","markdown-it-py"):
+        assert name in SUM_ANDROID_CORE_REQUIREMENTS;
+
+
+def test_sdl2_services_cover_clipboard_and_audio_without_pygame():
+    from pathlib import Path;
+    source=(Path(__file__).resolve().parents[1]/"src"/"sumbuild"/"android_runtime"/"sdl2_services.py").read_text(encoding="utf-8");
+    assert "SDL_SetClipboardText" in source;
+    assert "SDL_GetClipboardText" in source;
+    assert "SDL_OpenAudioDevice" in source;
+    assert "SDL_QueueAudio" in source;
+    assert "def play_tone(" in source;
+    assert "import pygame" not in source.lower();
+
+
+def test_responsive_font_contract_prefers_72_and_guarantees_40x15():
+    from pathlib import Path;
+    import json;
+    root=Path(__file__).resolve().parents[1];
+    project=json.loads((root/"examples"/"sumide-android"/"project.sum").read_text(encoding="utf-8"));
+    cfg=project["interface"]["font_auto"];
+    assert cfg["ideal_columns"] == 72;
+    assert cfg["min_columns"] == 40;
+    assert cfg["min_rows_keyboard"] == 15;
+    backend=(root/"src"/"sumbuild"/"android_runtime"/"sumgui_application_backend.py").read_text(encoding="utf-8");
+    assert "self.font_auto_min_rows_keyboard" in backend;
+    assert "for goal in (ideal,self.font_auto_min_columns)" in backend;
+
+
+def test_sumide_android_project_uses_full_runtime_and_all_files():
+    from pathlib import Path;
+    import json;
+    root=Path(__file__).resolve().parents[1];
+    project=json.loads((root/"examples"/"sumide-android"/"project.sum").read_text(encoding="utf-8"));
+    android=project["build"]["android"];
+    assert android["runtime"] == "sumide";
+    assert android["storage_access"] == "all-files";
+    assert "sdl2" in android["requirements"];
+
+
+def test_android_sumcore_audio_is_routed_to_sdl2():
+    from pathlib import Path;
+    source=(Path(__file__).resolve().parents[1]/"src"/"sumbuild"/"backends.py").read_text(encoding="utf-8");
+    assert "def _patch_android_sumcore_audio" in source;
+    assert 'SUM_AUDIO_BACKEND' in source;
+    assert 'from sumgui.sdl2_services import play_tone' in source;

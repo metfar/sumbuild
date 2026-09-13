@@ -117,7 +117,7 @@ class SumProject:
     @classmethod
     def create(cls, root, name, entrypoint="main.py", language="python"):
         root=Path(root).resolve(); root.mkdir(parents=True, exist_ok=True);
-        data={"sum_project":PROJECT_FORMAT,"name":name,"version":"0.1.0","language":language,"entrypoint":entrypoint,"sources":[entrypoint],"resources":[],"dependencies":[],"interface":{"screen":"auto","orientation":"auto","font_size":"auto","keyboard":{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto","repeat":{"enabled":True,"delay_ms":400,"interval_ms":55}},"shortcuts":{"exit":"F10","fullscreen":"ALT+ENTER"}},"build":{"targets":["host","android"],"console":True,"host":{"backend":"auto"},"android":{"backend":"auto","requirements":["python3","sdl2"]}}};
+        data={"sum_project":PROJECT_FORMAT,"name":name,"version":"0.1.0","language":language,"entrypoint":entrypoint,"sources":[entrypoint],"resources":[],"dependencies":[],"interface":{"screen":"auto","orientation":"auto","font_size":"auto","font_auto":{"ideal_columns":72,"min_columns":40,"portrait_columns":72,"landscape_columns":80,"min_rows_keyboard":15,"min_px":18,"max_px":64},"keyboard":{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto","repeat":{"enabled":True,"delay_ms":400,"interval_ms":55}},"shortcuts":{"exit":"F10","fullscreen":"ALT+ENTER"}},"build":{"targets":["host","android"],"console":True,"host":{"backend":"auto"},"android":{"backend":"auto","requirements":["python3","sdl2"]}}};
         project=cls(root, data);
         (root / PROJECT_FILENAME).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8");
         return project;
@@ -155,9 +155,9 @@ def project_from_main(path,name=None,target="host",backend=None,storage="auto"):
     if storage == "auto": storage="all-files" if profile in ("sumide","sumbasic","sumx","sumr") else "scoped";
     runtime_requirements={
         "python":["python3","sdl2"],
-        "sumbasic":["python3","sdl2","rich","pygments","markdown-it-py","mdurl"],
-        "sumx":["python3","sdl2","rich","pygments","markdown-it-py","mdurl"],
-        "sumr":["python3","sdl2"],
+        "sumbasic":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","Markdown","markdownify"],
+        "sumx":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","Markdown","markdownify"],
+        "sumr":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","Markdown","markdownify"],
     };
     data={
         "sum_project":PROJECT_FORMAT,
@@ -169,14 +169,14 @@ def project_from_main(path,name=None,target="host",backend=None,storage="auto"):
         "resources":[],
         "dependencies":[],
         "interface":{
-            "screen":"auto","orientation":"auto","font_size":"auto","icon":"sum",
+            "screen":"auto","orientation":"auto","font_size":"auto","font_auto":{"ideal_columns":72,"min_columns":40,"portrait_columns":72,"landscape_columns":80,"min_rows_keyboard":15,"min_px":18,"max_px":64},"icon":"sum",
             "keyboard":{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto","repeat":{"enabled":True,"delay_ms":400,"interval_ms":55}},
             "shortcuts":{"exit":"F10","fullscreen":"ALT+ENTER"},
         },
         "build":{
             "targets":[target],"console":True,
             "host":{"backend":backend or "auto"},
-            "android":{"backend":backend or "auto","requirements":runtime_requirements[language],"storage_access":storage,"runtime":language},
+            "android":{"backend":backend or "auto","requirements":runtime_requirements[language],"storage_access":storage,"runtime":language,"bundle":"sum-runtime"},
         },
     };
     return SumProject(source.parent,data);

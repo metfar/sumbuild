@@ -1,24 +1,30 @@
 {
   "sum_project": 1,
-  "name": "sumedit-android",
+  "name": "sumide",
   "version": "0.1.0",
   "language": "python",
   "entrypoint": "main.py",
   "sources": [
-    "main.py",
-    "vendor"
+    "main.py"
   ],
-  "resources": [
-    "sample.txt"
-  ],
+  "resources": [],
   "dependencies": [
-    "sumui",
-    "sumtui",
-    "sumgui"
+    "sumide"
   ],
   "interface": {
     "backend": "sumgui",
     "orientation": "auto",
+    "font_size": "auto",
+    "font_auto": {
+      "ideal_columns": 72,
+      "min_columns": 40,
+      "portrait_columns": 72,
+      "landscape_columns": 80,
+      "min_rows_keyboard": 15,
+      "min_px": 18,
+      "max_px": 64
+    },
+    "icon": "sum",
     "exit_button": "auto",
     "keyboard": {
       "system": true,
@@ -39,18 +45,7 @@
     "shortcuts": {
       "exit": "F10",
       "fullscreen": "ALT+ENTER"
-    },
-    "font_size": "auto",
-    "font_auto": {
-      "ideal_columns": 72,
-      "min_columns": 40,
-      "portrait_columns": 72,
-      "landscape_columns": 80,
-      "min_rows_keyboard": 15,
-      "min_px": 18,
-      "max_px": 64
-    },
-    "icon": "sum"
+    }
   },
   "build": {
     "targets": [
@@ -59,9 +54,8 @@
     "console": false,
     "android": {
       "backend": "p4a",
-      "package_name": "sumedit",
-      "package_domain": "org.sumecosystem",
-      "runtime": "sum-sdl2",
+      "runtime": "sumide",
+      "storage_access": "all-files",
       "api": 33,
       "ndk_api": 24,
       "arch": "arm64-v8a",
@@ -71,12 +65,9 @@
         "rich",
         "pygments",
         "markdown-it-py",
-        "mdurl"
-      ],
-      "permissions": [
-        "android.permission.MANAGE_EXTERNAL_STORAGE",
-        "(name=android.permission.READ_EXTERNAL_STORAGE;maxSdkVersion=32)",
-        "(name=android.permission.WRITE_EXTERNAL_STORAGE;maxSdkVersion=28)"
+        "mdurl",
+        "Markdown",
+        "markdownify"
       ]
     }
   }

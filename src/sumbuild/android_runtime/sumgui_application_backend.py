@@ -26,6 +26,7 @@ import json;
 import os;
 import threading;
 import time;
+from .sdl2_services import SDLClipboardAdapter, audio_service, load_sdl2, load_sdl2_ttf;
 
 from rich.cells import get_character_cell_size;
 from rich.console import Console, ConsoleDimensions;
@@ -224,10 +225,16 @@ class GraphicalApplicationBackend:
         self.font_size=max(18,configured); self.fps=max(10,int(fps));
         auto_cfg=self.runtime.get("font_auto",{});
         if not isinstance(auto_cfg,dict): auto_cfg={};
-        try: self.font_auto_portrait_columns=max(28,int(auto_cfg.get("portrait_columns",48)));
-        except (TypeError,ValueError): self.font_auto_portrait_columns=48;
+        try: self.font_auto_portrait_columns=max(40,int(auto_cfg.get("portrait_columns",72)));
+        except (TypeError,ValueError): self.font_auto_portrait_columns=72;
         try: self.font_auto_landscape_columns=max(40,int(auto_cfg.get("landscape_columns",80)));
         except (TypeError,ValueError): self.font_auto_landscape_columns=80;
+        try: self.font_auto_ideal_columns=max(40,int(auto_cfg.get("ideal_columns",72)));
+        except (TypeError,ValueError): self.font_auto_ideal_columns=72;
+        try: self.font_auto_min_columns=max(20,int(auto_cfg.get("min_columns",40)));
+        except (TypeError,ValueError): self.font_auto_min_columns=40;
+        try: self.font_auto_min_rows_keyboard=max(8,int(auto_cfg.get("min_rows_keyboard",15)));
+        except (TypeError,ValueError): self.font_auto_min_rows_keyboard=15;
         try: self.font_auto_min_px=max(16,int(auto_cfg.get("min_px",22)));
         except (TypeError,ValueError): self.font_auto_min_px=22;
         try: self.font_auto_max_px=max(self.font_auto_min_px,int(auto_cfg.get("max_px",64)));
@@ -271,16 +278,38 @@ class GraphicalApplicationBackend:
             except (TypeError,ValueError): pass;
         return (self.accessory_repeat_delay_ms,self.accessory_repeat_interval_ms);
 
+    def beep(self,frequency=880.0,duration=.08,volume=.35,blocking=True):
+        try: return bool(audio_service().tone(frequency,duration,volume=volume,blocking=blocking));
+        except Exception: return False;
+
     def _target_columns(self):
-        return self.font_auto_portrait_columns if self.height>=self.width else self.font_auto_landscape_columns;
+        return max(self.font_auto_ideal_columns,self.font_auto_portrait_columns if self.height>=self.width else self.font_auto_landscape_columns);
+
+    def _predicted_layout(self,size):
+        # Predict actual terminal geometry from the currently measured mono font.
+        # Keybar height follows font size, while the IME reserve is the physical
+        # screen area hidden by the Android keyboard.
+        scale=float(size)/max(1.0,float(self.font_size));
+        cell_w=max(1,int(round(self.cell_width*scale))); cell_h=max(1,int(round(self.cell_height*scale)));
+        button_h=max(72,int(round(size*3.8))) if self.accessory_button_height_auto else self.accessory_button_height;
+        overlay=max(112,button_h*2+22);
+        reserved=self._keyboard_reserved_pixels_for_cell(cell_h);
+        usable=max(cell_h,self.height-reserved-overlay);
+        return max(1,self.width//cell_w),max(1,usable//cell_h);
 
     def _auto_font_size(self):
-        target=max(1,self._target_columns());
-        # A normal monospace glyph is about 0.60 em wide.  Start there, then
-        # refine once using the actual font metrics so the terminal width is
-        # stable across Android phones, tablets and font families.
-        estimated=round(self.width/(target*0.60));
-        return max(self.font_auto_min_px,min(self.font_auto_max_px,int(estimated)));
+        # Prefer the largest size that still gives the ideal 72-ish columns and
+        # at least 15 rows with the IME visible.  If the device cannot satisfy
+        # the ideal, retain readability but never intentionally go below 40
+        # columns while a smaller font can meet that floor.
+        ideal=max(self.font_auto_ideal_columns,self._target_columns());
+        rows_floor=self.font_auto_min_rows_keyboard if self._keyboard_visible else 15;
+        candidates=list(range(self.font_auto_max_px,self.font_auto_min_px-1,-1));
+        for goal in (ideal,self.font_auto_min_columns):
+            for size in candidates:
+                cols,rows=self._predicted_layout(size);
+                if cols>=goal and rows>=rows_floor: return size;
+        return self.font_auto_min_px;
 
     def _clear_texture_cache(self):
         if self.sdl:
@@ -306,17 +335,12 @@ class GraphicalApplicationBackend:
         self.font,self.font_path,self.border_font,self.border_font_path=_choose_fonts(self.ttf,self.font_size);
         w=ctypes.c_int(); h=ctypes.c_int(); self.ttf.TTF_SizeUTF8(self.font,b"M",ctypes.byref(w),ctypes.byref(h));
         self.cell_width=max(7,int(w.value)); self.cell_height=max(12,int(h.value)+3);
-        if self.font_auto and refine:
-            target=max(1,self._target_columns()); desired=max(1.0,self.width/target);
-            corrected=round(self.font_size*(desired/max(1,self.cell_width)));
-            corrected=max(self.font_auto_min_px,min(self.font_auto_max_px,int(corrected)));
-            if abs(corrected-self.font_size)>=2: return self._load_fonts(corrected,False) or True;
         if self.accessory_button_height_auto: self.accessory_button_height=max(72,int(round(self.font_size*3.8)));
         self.overlay_height=max(112,self.accessory_button_height*2+22);
         return True;
 
     def _open(self):
-        self.sdl=ctypes.CDLL("libSDL2.so"); self.ttf=ctypes.CDLL("libSDL2_ttf.so"); _bind_sdl(self.sdl); _bind_ttf(self.ttf);
+        self.sdl=load_sdl2(); self.ttf=load_sdl2_ttf(); _bind_sdl(self.sdl); _bind_ttf(self.ttf);
         if self.sdl.SDL_Init(SDL_INIT_VIDEO)!=0: raise RuntimeError("SDL_Init: "+self.sdl.SDL_GetError().decode("utf-8","replace"));
         if self.ttf.TTF_Init()!=0: raise RuntimeError("TTF_Init failed");
         self.window=self.sdl.SDL_CreateWindow(self.title.encode("utf-8"),0,0,960,540,SDL_WINDOW_SHOWN|SDL_WINDOW_FULLSCREEN_DESKTOP);
@@ -327,11 +351,23 @@ class GraphicalApplicationBackend:
         if not self.renderer: raise RuntimeError("SDL_CreateRenderer: "+self.sdl.SDL_GetError().decode("utf-8","replace"));
         w=ctypes.c_int(); h=ctypes.c_int(); self.sdl.SDL_GetRendererOutputSize(self.renderer,ctypes.byref(w),ctypes.byref(h));
         self.width=max(1,w.value); self.height=max(1,h.value);
-        self._load_fonts(self._auto_font_size() if self.font_auto else self.font_size,refine=self.font_auto);
+        if self.font_auto:
+            estimated=max(self.font_auto_min_px,min(self.font_auto_max_px,int(round(self.width/(max(1,self._target_columns())*0.60)))));
+            self._load_fonts(estimated,refine=False);
+            fitted=self._auto_font_size();
+            if fitted!=self.font_size: self._load_fonts(fitted,refine=False);
+        else: self._load_fonts(self.font_size,refine=False);
         self.sdl.SDL_StopTextInput(); self._keyboard_visible=False;
+        self.clipboard_available=False; self.audio_available=False;
+        try:
+            from sumtui.clipboard import clipboard as sum_clipboard;
+            sum_clipboard._system=SDLClipboardAdapter(self.sdl); self.clipboard_available=True;
+        except Exception: pass;
+        try: self.audio_available=bool(audio_service().available);
+        except Exception: self.audio_available=False;
         self._resize();
 
-    def _keyboard_reserved_pixels(self):
+    def _keyboard_reserved_pixels_for_cell(self,cell_height):
         if not self._keyboard_visible: return 0;
         value=self.keyboard_reserve;
         if value in (False,None,"none","off","false",0): return 0;
@@ -339,9 +375,14 @@ class GraphicalApplicationBackend:
         else:
             try: ratio=float(value);
             except (TypeError,ValueError): ratio=0.42 if self.height>=self.width else 0.52;
-            if ratio>1.0: return max(0,min(int(ratio),self.height-self.cell_height*8));
+            if ratio>1.0: return max(0,min(int(ratio),self.height-cell_height*self.font_auto_min_rows_keyboard));
             ratio=max(0.0,min(0.75,ratio));
-        return max(0,min(int(self.height*ratio),self.height-self.cell_height*8));
+        # Do not reserve so much that SUM loses its requested 15 visible rows.
+        max_reserved=max(0,self.height-(cell_height*self.font_auto_min_rows_keyboard)-self.overlay_height);
+        return max(0,min(int(self.height*ratio),max_reserved));
+
+    def _keyboard_reserved_pixels(self):
+        return self._keyboard_reserved_pixels_for_cell(self.cell_height);
 
     def _resize(self):
         w=ctypes.c_int(); h=ctypes.c_int(); self.sdl.SDL_GetRendererOutputSize(self.renderer,ctypes.byref(w),ctypes.byref(h)); self.width=max(1,w.value); self.height=max(1,h.value);
@@ -350,7 +391,7 @@ class GraphicalApplicationBackend:
             if abs(wanted-self.font_size)>=2: self._load_fonts(wanted,refine=True);
         reserved=self._keyboard_reserved_pixels(); self._content_bottom=max(self.overlay_height+self.cell_height*8,self.height-reserved);
         usable=max(self.cell_height*8,self._content_bottom-self.overlay_height);
-        self.columns=max(20,self.width//self.cell_width); self.rows=max(8,usable//self.cell_height);
+        self.columns=max(1,self.width//self.cell_width); self.rows=max(1,usable//self.cell_height);
         self.console=Console(width=self.columns,height=self.rows,color_system="truecolor",force_terminal=True,legacy_windows=False,soft_wrap=False);
         self.application.last_size=ConsoleDimensions(self.columns,self.rows); self.application.dispatch(ResizeEvent(self.columns,self.rows));
         self._redraw_requested=True;

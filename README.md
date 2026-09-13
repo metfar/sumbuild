@@ -142,3 +142,7 @@ pure-Python runtime into the APK staging tree, and generates a Python `main.py` 
 sumIDE language entrypoint. This keeps the source file unchanged. The currently validated Android presentation is
 the shared sumTUI/sumGUI application backend; language-specific pixel-graphics paths that still instantiate desktop
 Pygame directly remain a separate migration target.
+
+## 0.1.0a18 SDL2 runtime direction
+
+Android graphical applications use the SUM SDL2/ctypes path. The runtime now provides native SDL2 clipboard access and a minimal queued-audio sink, and the sumIDE Android example uses the full SUM runtime bundle (excluding sumBuild). Responsive text layout prefers 72 columns with a 40-column floor and targets at least 15 visible rows with the IME present.

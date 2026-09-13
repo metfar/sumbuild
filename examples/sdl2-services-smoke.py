@@ -19,5 +19,10 @@
 #  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 #  MA 02110-1301, USA.
 #  
-"""SUM project/build orchestration.""";
-__version__="0.1.0a18";
+"""Desktop smoke test for the SDL2/ctypes SUM services.""";
+from sumbuild.android_runtime.sdl2_services import SDLClipboardAdapter, audio_service, beep, load_sdl2;
+
+sdl=load_sdl2(); print("SDL2: OK");
+clipboard=SDLClipboardAdapter(sdl); clipboard.copy("SUM SDL2 clipboard ✓"); print("Clipboard:",repr(clipboard.paste()));
+audio=audio_service(); print("Audio:","OK" if audio.available else "UNAVAILABLE","rate",audio.sample_rate);
+if audio.available: beep(880,.10,.30); print("BEEP: queued");
