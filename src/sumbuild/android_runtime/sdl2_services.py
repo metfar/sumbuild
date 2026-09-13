@@ -21,7 +21,6 @@
 #  
 """Small platform-neutral SDL2 services used by SUM without Pygame.""";
 import ctypes;
-import ctypes.util;
 import math;
 import os;
 import struct;
@@ -40,12 +39,26 @@ class SDL_AudioSpec(ctypes.Structure):
 
 
 def _load_library(names,find_name=None):
+    """Load a native library without importing ctypes.util on Android.
+
+    CPython's ctypes.util imports the platform helper module ``android`` on
+    Android. python-for-android does not ship that helper in the embedded
+    runtime, so importing ctypes.util can abort the application before SDL is
+    even tried. p4a's SDL2 bootstrap exposes the normal libSDL2*.so sonames,
+    therefore direct CDLL loading is both sufficient and the validated path.
+    Desktop keeps find_library as a last-resort fallback.
+    """;
     errors=[];
     for name in names:
         try: return ctypes.CDLL(name);
         except OSError as exc: errors.append("{}: {}".format(name,exc));
-    if find_name:
-        found=ctypes.util.find_library(find_name);
+    is_android=(os.environ.get("SUM_ANDROID")=="1" or "ANDROID_ARGUMENT" in os.environ or "ANDROID_PRIVATE" in os.environ);
+    if find_name and not is_android:
+        try:
+            import ctypes.util as ctypes_util;
+            found=ctypes_util.find_library(find_name);
+        except (ImportError,ModuleNotFoundError,AttributeError,OSError) as exc:
+            found=None; errors.append("find_library({}): {}".format(find_name,exc));
         if found:
             try: return ctypes.CDLL(found);
             except OSError as exc: errors.append("{}: {}".format(found,exc));
