@@ -332,25 +332,40 @@ class GraphicalApplicationBackend:
         ];
 
     def _draw_spectrum_arrow(self,direction,rect,color=(250,250,250)):
-        # Do not depend on a font glyph for navigation arrows. The Android
-        # system monospace font may contain very light arrow characters, making
-        # them almost invisible on a touch key. Draw the ZX-style arrow as
-        # solid SDL geometry instead so its weight scales with the key itself.
+        # Draw a solid ZX-style cursor arrow ourselves instead of using a font
+        # glyph.  The arrow consists of a thick rectangular shaft plus a
+        # triangular head.  The head grows from the tip towards its base; an
+        # earlier implementation did this backwards and produced a torch-like
+        # shape rather than an arrow.
         cx=rect.x+rect.w//2; cy=rect.y+rect.h//2;
-        unit=max(3,min(rect.w,rect.h)//12);
-        shaft=max(unit*2,6); length=max(unit*5,min(rect.w,rect.h)//3); head=max(unit*4,10);
+        short=max(12,min(rect.w,rect.h));
+        shaft=max(7,short//7);
+        head_len=max(12,short//3);
+        head_span=max(18,(short*3)//5);
+        total=max(head_len+shaft*3,min(rect.w,rect.h)*2//3);
         if direction in (Key.LEFT,Key.RIGHT):
-            self._fill(cx-length//2,cy-shaft//2,length,shaft,color);
-            sign=-1 if direction==Key.LEFT else 1; tip=cx+sign*(length//2+head//2);
-            for i in range(head):
-                span=max(1,head-i);
-                x=tip-sign*i; self._fill(x,cy-span//2,1,span,color);
+            sign=-1 if direction==Key.LEFT else 1;
+            tip=cx+sign*(total//2);
+            base=tip-sign*head_len;
+            tail=cx-sign*(total//2);
+            x=min(tail,base); width=max(1,abs(base-tail)+1);
+            self._fill(x,cy-shaft//2,width,shaft,color);
+            for i in range(head_len+1):
+                # i=0 is the tip: narrow. i=head_len is the base: widest.
+                span=max(2,2+((head_span-2)*i)//max(1,head_len));
+                px=tip-sign*i;
+                self._fill(px,cy-span//2,2,span,color);
         else:
-            self._fill(cx-shaft//2,cy-length//2,shaft,length,color);
-            sign=-1 if direction==Key.UP else 1; tip=cy+sign*(length//2+head//2);
-            for i in range(head):
-                span=max(1,head-i);
-                y=tip-sign*i; self._fill(cx-span//2,y,span,1,color);
+            sign=-1 if direction==Key.UP else 1;
+            tip=cy+sign*(total//2);
+            base=tip-sign*head_len;
+            tail=cy-sign*(total//2);
+            y=min(tail,base); height=max(1,abs(base-tail)+1);
+            self._fill(cx-shaft//2,y,shaft,height,color);
+            for i in range(head_len+1):
+                span=max(2,2+((head_span-2)*i)//max(1,head_len));
+                py=tip-sign*i;
+                self._fill(cx-span//2,py,span,2,color);
 
     def _draw_overlay_button(self,label,action,rect,active=False):
         bg=(58,74,82) if active else (26,26,32);
