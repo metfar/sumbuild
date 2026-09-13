@@ -127,9 +127,8 @@ _RUNTIME = r'''#!/usr/bin/env python3
 #  MA 02110-1301, USA.
 #  
 import ctypes;
-import ctypes.util;
 import json;
-import sys;
+import traceback;
 
 MODEL=json.loads(__MODEL__);
 SDL_INIT_VIDEO=0x00000020;
@@ -158,12 +157,10 @@ class SDL_Event(ctypes.Union):
     _fields_=[("type",ctypes.c_uint32),("key",SDL_KeyboardEvent),("button",SDL_MouseButtonEvent),("padding",ctypes.c_uint8*56)];
 
 def _load_sdl():
-    names=["libSDL2.so",ctypes.util.find_library("SDL2"),"libSDL2-2.0.so.0","SDL2.dll","libSDL2.dylib"];
-    for name in names:
-        if not name: continue;
-        try: return ctypes.CDLL(name);
-        except OSError: pass;
-    raise RuntimeError("SDL2 library not found");
+    # Android p4a/sdl2 packages this exact soname.  Do not call
+    # ctypes.util.find_library() here: it is host-oriented and was not part
+    # of the validated Android path.
+    return ctypes.CDLL("libSDL2.so");
 
 def _bind(lib):
     lib.SDL_Init.argtypes=[ctypes.c_uint32]; lib.SDL_Init.restype=ctypes.c_int;
@@ -182,6 +179,7 @@ def _bind(lib):
     lib.SDL_PollEvent.argtypes=[ctypes.POINTER(SDL_Event)]; lib.SDL_PollEvent.restype=ctypes.c_int;
     lib.SDL_Delay.argtypes=[ctypes.c_uint32]; lib.SDL_Delay.restype=None;
     lib.SDL_SetWindowFullscreen.argtypes=[ctypes.c_void_p,ctypes.c_uint32]; lib.SDL_SetWindowFullscreen.restype=ctypes.c_int;
+    lib.SDL_ShowSimpleMessageBox.argtypes=[ctypes.c_uint32,ctypes.c_char_p,ctypes.c_char_p,ctypes.c_void_p]; lib.SDL_ShowSimpleMessageBox.restype=ctypes.c_int;
 
 def _rgb(renderer, color):
     lib.SDL_SetRenderDrawColor(renderer,*color,255);
@@ -245,36 +243,57 @@ def _draw(renderer,pressed,alert):
 
 def main():
     global lib;
-    lib=_load_sdl(); _bind(lib);
-    if lib.SDL_Init(SDL_INIT_VIDEO)!=0: raise RuntimeError(lib.SDL_GetError().decode("utf-8","replace"));
-    cfg=MODEL["window"]; flags=SDL_WINDOW_SHOWN | (SDL_WINDOW_FULLSCREEN_DESKTOP if cfg.get("fullscreen") else 0);
-    window=lib.SDL_CreateWindow(cfg["title"].encode("utf-8"),0,0,cfg["width"],cfg["height"],flags);
-    if not window: raise RuntimeError(lib.SDL_GetError().decode("utf-8","replace"));
-    renderer=lib.SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED|SDL_RENDERER_PRESENTVSYNC) or lib.SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE);
-    if not renderer: raise RuntimeError(lib.SDL_GetError().decode("utf-8","replace"));
-    lib.SDL_RenderSetLogicalSize(renderer,cfg["width"],cfg["height"]);
-    running=True; pressed=None; alert=None; fullscreen=bool(cfg.get("fullscreen")); event=SDL_Event(); _draw(renderer,pressed,alert);
-    while running:
-        while lib.SDL_PollEvent(ctypes.byref(event)):
-            if event.type == SDL_QUIT: running=False;
-            elif event.type == SDL_KEYDOWN:
-                sym=event.key.keysym.sym; mod=event.key.keysym.mod;
-                if sym == SDLK_F10: running=False;
-                elif sym == SDLK_RETURN and (mod & KMOD_ALT):
-                    fullscreen=not fullscreen; lib.SDL_SetWindowFullscreen(window,SDL_WINDOW_FULLSCREEN_DESKTOP if fullscreen else 0);
-            elif event.type == SDL_MOUSEBUTTONDOWN:
-                if alert: alert=None;
-                else:
-                    for index,w in enumerate(MODEL["widgets"]):
-                        if w["kind"]=="button" and _inside(w,event.button.x,event.button.y): pressed=index; break;
-            elif event.type == SDL_MOUSEBUTTONUP:
-                if pressed is not None:
-                    w=MODEL["widgets"][pressed];
-                    if _inside(w,event.button.x,event.button.y): alert=w.get("alert");
-                    pressed=None;
-            _draw(renderer,pressed,alert);
-        lib.SDL_Delay(10);
-    lib.SDL_DestroyRenderer(renderer); lib.SDL_DestroyWindow(window); lib.SDL_Quit(); return 0;
+    lib=None; window=None; renderer=None;
+    try:
+        lib=_load_sdl(); _bind(lib);
+        if lib.SDL_Init(SDL_INIT_VIDEO)!=0: raise RuntimeError("SDL_Init: "+lib.SDL_GetError().decode("utf-8","replace"));
+        cfg=MODEL["window"];
+        # This file is generated only for the p4a SDLActivity.  The Activity
+        # owns the Android screen, so create the SDL window fullscreen and
+        # use logical coordinates for the desktop-designed SUM GUI.
+        flags=SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP;
+        window=lib.SDL_CreateWindow(cfg["title"].encode("utf-8"),0,0,cfg["width"],cfg["height"],flags);
+        if not window: raise RuntimeError("SDL_CreateWindow: "+lib.SDL_GetError().decode("utf-8","replace"));
+        renderer=lib.SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED|SDL_RENDERER_PRESENTVSYNC);
+        if not renderer: renderer=lib.SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
+        if not renderer: renderer=lib.SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE);
+        if not renderer: raise RuntimeError("SDL_CreateRenderer: "+lib.SDL_GetError().decode("utf-8","replace"));
+        if lib.SDL_RenderSetLogicalSize(renderer,cfg["width"],cfg["height"])!=0: raise RuntimeError("SDL_RenderSetLogicalSize: "+lib.SDL_GetError().decode("utf-8","replace"));
+        running=True; pressed=None; alert=None; fullscreen=True; event=SDL_Event(); _draw(renderer,pressed,alert);
+        while running:
+            while lib.SDL_PollEvent(ctypes.byref(event)):
+                if event.type == SDL_QUIT: running=False;
+                elif event.type == SDL_KEYDOWN:
+                    sym=event.key.keysym.sym; mod=event.key.keysym.mod;
+                    if sym == SDLK_F10: running=False;
+                    elif sym == SDLK_RETURN and (mod & KMOD_ALT):
+                        fullscreen=not fullscreen; lib.SDL_SetWindowFullscreen(window,SDL_WINDOW_FULLSCREEN_DESKTOP if fullscreen else 0);
+                elif event.type == SDL_MOUSEBUTTONDOWN:
+                    if alert: alert=None;
+                    else:
+                        for index,w in enumerate(MODEL["widgets"]):
+                            if w["kind"]=="button" and _inside(w,event.button.x,event.button.y): pressed=index; break;
+                elif event.type == SDL_MOUSEBUTTONUP:
+                    if pressed is not None:
+                        w=MODEL["widgets"][pressed];
+                        if _inside(w,event.button.x,event.button.y): alert=w.get("alert");
+                        pressed=None;
+                _draw(renderer,pressed,alert);
+            lib.SDL_Delay(10);
+        return 0;
+    except BaseException:
+        text=traceback.format_exc(); print(text,flush=True);
+        if lib is not None:
+            try: lib.SDL_ShowSimpleMessageBox(0x10,b"SUM runtime error",text.encode("utf-8","replace"),window);
+            except BaseException: pass;
+        return 1;
+    finally:
+        if lib is not None:
+            try:
+                if renderer: lib.SDL_DestroyRenderer(renderer);
+                if window: lib.SDL_DestroyWindow(window);
+                lib.SDL_Quit();
+            except BaseException: pass;
 
 if __name__ == "__main__":
     raise SystemExit(main());
