@@ -501,7 +501,7 @@ def test_a28_full_runtime_core_requirements_keep_git_recipes_unversioned():
 
 def test_a28_profile_revision_and_recipe_tag_overrides():
     from sumbuild.backends import SUM_P4A_PROFILE_REVISION;
-    assert SUM_P4A_PROFILE_REVISION.startswith("a30-");
+    assert SUM_P4A_PROFILE_REVISION.startswith("a31-");
     import sumbuild.backends as backends;
     overrides=backends._android_recipe_version_overrides();
     assert overrides["VERSION_numpy"] == "v2.2.3";
@@ -540,3 +540,43 @@ def test_a29_pandas_local_recipe_pins_isolated_build_numpy(tmp_path):
     assert "inc_android" in patch;
     assert "-     '''" in patch;
     assert '+print(os.environ["NUMPY_INCLUDES"]) ' in patch;
+
+
+def test_a31_shared_source_cache_is_independent_of_project_requirements(tmp_path,monkeypatch):
+    import json;
+    import sumbuild.backends as backends;
+    fake_home=tmp_path/"home"; fake_home.mkdir(); monkeypatch.setattr(Path,"home",classmethod(lambda cls: fake_home));
+    def make(name,requirements):
+        root=tmp_path/name; root.mkdir(); (root/"main.py").write_text("print(1)\n",encoding="utf-8");
+        manifest=root/"project.sum"; manifest.write_text(json.dumps({"sum_project":1,"name":name,"entrypoint":"main.py","sources":["main.py"],"build":{"android":{"backend":"p4a","requirements":requirements}}}),encoding="utf-8");
+        return backends.SumProject.load(manifest);
+    one=make("one",["python3","sdl2","numpy"]);
+    two=make("two",["python3","sdl2","rich","numpy","pandas","matplotlib"]);
+    assert backends._p4a_source_cache_storage(one) == backends._p4a_source_cache_storage(two);
+    assert str(backends._p4a_source_cache_storage(one)).startswith(str(fake_home/".cache"/"sumbuild"/"p4a-sources"));
+
+
+def test_a31_profile_packages_link_to_shared_source_cache(tmp_path):
+    import sumbuild.backends as backends;
+    profile=tmp_path/"profile"; source=tmp_path/"sources";
+    status=backends._link_p4a_shared_packages(profile,source);
+    assert status["linked"] is True;
+    assert (profile/"packages").is_symlink();
+    marker=source/"packages"/"demo.txt"; marker.write_text("cached",encoding="utf-8");
+    assert (profile/"packages"/"demo.txt").read_text(encoding="utf-8") == "cached";
+
+
+def test_a31_source_cache_lock_rejects_live_owner_and_recovers_stale(tmp_path):
+    import sumbuild.backends as backends;
+    source=tmp_path/"sources";
+    first=backends._acquire_p4a_source_lock(source);
+    try:
+        try: backends._acquire_p4a_source_lock(source);
+        except backends.BuildError as exc: assert "shared p4a source cache" in str(exc);
+        else: raise AssertionError("live shared source cache lock should be rejected");
+    finally:
+        backends._release_p4a_source_lock(first);
+    stale=source/".sumbuild-source.lock"; stale.write_text("99999999",encoding="ascii");
+    second=backends._acquire_p4a_source_lock(source);
+    assert second.exists();
+    backends._release_p4a_source_lock(second);

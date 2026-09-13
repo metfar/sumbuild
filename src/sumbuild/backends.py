@@ -29,6 +29,7 @@ import struct;
 import zlib;
 import binascii;
 import importlib.util;
+import importlib.metadata;
 import hashlib;
 from .project import SumProject;
 from .transpile import TranspileError, transpile_sumgui_easy;
@@ -53,7 +54,8 @@ SUM_ANDROID_PYTHON_VERSION="3.13.13";
 SUM_ANDROID_NUMPY_VERSION="2.2.3";
 SUM_ANDROID_PANDAS_VERSION="2.2.3";
 SUM_ANDROID_MATPLOTLIB_VERSION="3.10.1";
-SUM_P4A_PROFILE_REVISION="a30-android-pandas-official-include-patch-1";
+SUM_P4A_PROFILE_REVISION="a31-shared-source-cache-1";
+SUM_P4A_SOURCE_CACHE_REVISION="sources-v1";
 
 SUM_ANDROID_CORE_REQUIREMENTS=(
     "python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify",
@@ -706,6 +708,47 @@ def _android_icon(project, directory):
     target=Path(directory) / ("app-icon" + source.suffix.lower()); shutil.copy2(str(source),str(target)); return target;
 
 
+def _p4a_tool_version():
+    try: return importlib.metadata.version("python-for-android");
+    except importlib.metadata.PackageNotFoundError: return "unknown";
+
+
+def _p4a_source_cache_storage(project):
+    # Downloads are safe to share across project/profile build trees as long as
+    # the python-for-android recipe set and our explicit recipe version matrix
+    # are the same.  Build products and dists remain profile-isolated.
+    settings=_android_settings(project);
+    configured=settings.get("p4a_source_cache_dir") or os.environ.get("SUMBUILD_P4A_SOURCE_CACHE");
+    if configured:
+        root=Path(str(configured)).expanduser();
+        if not root.is_absolute(): root=(project.root / root);
+        return root.resolve();
+    matrix=",".join("{}={}".format(key,value) for key,value in sorted(_android_recipe_version_overrides().items()));
+    payload="|".join((SUM_P4A_SOURCE_CACHE_REVISION,"p4a="+_p4a_tool_version(),"recipe_versions="+matrix));
+    digest=hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16];
+    return (Path.home() / ".cache" / "sumbuild" / "p4a-sources" / digest).resolve();
+
+
+def _link_p4a_shared_packages(profile_storage, source_storage):
+    profile=Path(profile_storage); source=Path(source_storage);
+    profile.mkdir(parents=True,exist_ok=True); source.mkdir(parents=True,exist_ok=True);
+    shared_packages=source / "packages"; shared_packages.mkdir(parents=True,exist_ok=True);
+    packages=profile / "packages";
+    if packages.is_symlink():
+        try: current=packages.resolve();
+        except OSError: current=None;
+        if current == shared_packages.resolve(): return {"linked":True,"path":str(packages),"source":str(shared_packages)};
+        packages.unlink();
+    elif packages.exists():
+        try: empty=not any(packages.iterdir());
+        except NotADirectoryError: empty=False;
+        if not empty:
+            return {"linked":False,"path":str(packages),"source":str(shared_packages),"reason":"profile packages directory already contains data"};
+        packages.rmdir();
+    packages.symlink_to(shared_packages,target_is_directory=True);
+    return {"linked":True,"path":str(packages),"source":str(shared_packages)};
+
+
 def _p4a_profile_storage(project, requirements, arch):
     # Keep incompatible p4a distributions/build trees from sharing mutable state.
     settings=_android_settings(project);
@@ -1016,6 +1059,32 @@ def _release_p4a_profile_lock(path):
     except FileNotFoundError: pass;
 
 
+def _acquire_p4a_source_lock(source_dir):
+    root=Path(source_dir); root.mkdir(parents=True,exist_ok=True);
+    path=root / ".sumbuild-source.lock";
+    for _attempt in range(2):
+        try:
+            fd=os.open(str(path),os.O_CREAT | os.O_EXCL | os.O_WRONLY,0o600);
+            os.write(fd,str(os.getpid()).encode("ascii")); os.close(fd);
+            return path;
+        except FileExistsError:
+            try: pid=int(path.read_text(encoding="ascii").strip());
+            except (OSError,ValueError): pid=None;
+            alive=False;
+            if pid:
+                try: os.kill(pid,0); alive=True;
+                except ProcessLookupError: alive=False;
+                except PermissionError: alive=True;
+            if alive: raise BuildError("another sumBuild Android build is using shared p4a source cache {} (pid {})".format(root,pid));
+            try: path.unlink();
+            except FileNotFoundError: pass;
+    raise BuildError("could not acquire shared p4a source cache lock: {}".format(path));
+
+
+def _release_p4a_source_lock(path):
+    _release_p4a_profile_lock(path);
+
+
 def _repair_p4a_git_locks(storage_dir):
     # p4a's git recipe cache can leave shallow.lock behind after an aborted fetch.
     root=Path(storage_dir); removed=[];
@@ -1116,12 +1185,20 @@ def build_android(project, prepare_only=False, backend=None):
     if prepare_only: return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"recipe_versions":_android_recipe_version_overrides(),"transpile":stage,"command":command,"artifact":None};
     executable=command[0];
     if not shutil.which(executable): raise BuildError("{} not found; run sumbuild --doctor or use --prepare".format(executable));
-    p4a_venv=None; p4a_storage=None; p4a_git_locks_removed=[]; p4a_profile_lock=None;
+    p4a_venv=None; p4a_storage=None; p4a_git_locks_removed=[]; p4a_profile_lock=None; p4a_source_cache=None; p4a_source_lock=None; p4a_source_link=None;
     if selected == "p4a":
         p4a_storage=_p4a_storage_from_command(command);
         if p4a_storage is not None:
             p4a_profile_lock=_acquire_p4a_profile_lock(p4a_storage);
-            p4a_git_locks_removed=_repair_p4a_git_locks(p4a_storage);
+            p4a_source_cache=_p4a_source_cache_storage(project);
+            p4a_source_lock=_acquire_p4a_source_lock(p4a_source_cache);
+            p4a_source_link=_link_p4a_shared_packages(p4a_storage,p4a_source_cache);
+            if p4a_source_link.get("linked"):
+                print("[INFO] p4a shared source cache: {}".format(p4a_source_cache),file=sys.stderr);
+                p4a_git_locks_removed=_repair_p4a_git_locks(p4a_source_cache);
+            else:
+                print("[WARNING] p4a shared source cache not linked: {}".format(p4a_source_link.get("reason","unknown reason")),file=sys.stderr);
+                p4a_git_locks_removed=_repair_p4a_git_locks(p4a_storage);
             if p4a_git_locks_removed: print("[INFO] removed stale python-for-android git lock(s): {}".format(len(p4a_git_locks_removed)),file=sys.stderr);
         p4a_venv=_reset_p4a_transient_venv(env,p4a_storage);
         if p4a_venv.get("reset"): print("[INFO] reset python-for-android transient pip environment: {}".format(p4a_venv["path"]),file=sys.stderr);
@@ -1130,10 +1207,11 @@ def build_android(project, prepare_only=False, backend=None):
     except subprocess.CalledProcessError as exc:
         raise BuildError("{} build failed with exit status {}".format(selected,exc.returncode)) from exc;
     finally:
+        _release_p4a_source_lock(p4a_source_lock);
         _release_p4a_profile_lock(p4a_profile_lock);
     apk=_find_android_apk(directory,selected);
     if apk is None: raise BuildError("{} finished but no APK was found in staging".format(selected));
     dist=project.root / "dist"; dist.mkdir(parents=True,exist_ok=True);
     target=dist / "{}-{}-{}.apk".format(project.name,project.version,"debug" if str(_android_settings(project).get("mode","debug")) == "debug" else "release");
     shutil.copy2(str(apk),str(target));
-    return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"recipe_versions":_android_recipe_version_overrides(),"p4a_storage":str(p4a_storage) if p4a_storage is not None else None,"p4a_venv":p4a_venv,"p4a_git_locks_removed":p4a_git_locks_removed,"transpile":stage,"command":command,"artifact":str(target)};
+    return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"recipe_versions":_android_recipe_version_overrides(),"p4a_storage":str(p4a_storage) if p4a_storage is not None else None,"p4a_source_cache":str(p4a_source_cache) if p4a_source_cache is not None else None,"p4a_source_link":p4a_source_link,"p4a_venv":p4a_venv,"p4a_git_locks_removed":p4a_git_locks_removed,"transpile":stage,"command":command,"artifact":str(target)};
