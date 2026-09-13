@@ -75,7 +75,10 @@ def test_sumgui_easy_android_transpile(tmp_path):
     assert "ctypes.CDLL" in generated;
     assert "SDLK_F10" in generated;
     assert "SDL_SetWindowFullscreen" in generated;
-    assert "--requirements=python3,sdl2" in command;
+    requirements=next(item for item in command if item.startswith("--requirements="));
+    assert "python3==3.13.13" in requirements;
+    assert "hostpython3==3.13.13" in requirements;
+    assert ",sdl2" in requirements;
     orientations=[item for item in command if item.startswith("--orientation=")];
     assert orientations == ["--orientation=portrait","--orientation=landscape","--orientation=portrait-reverse","--orientation=landscape-reverse"];
 
@@ -414,20 +417,18 @@ def test_a26_p4a_profile_changes_with_requirements(tmp_path,monkeypatch):
     assert p1 != p2;
 
 
-def test_a26_numpy_uses_local_recipe_with_unordered_map_prebuild_fix(tmp_path):
+def test_a27_numpy_uses_pinned_builtin_recipe(tmp_path):
     import json;
     from sumbuild.backends import prepare_android;
     main=tmp_path/"main.py"; main.write_text("import numpy\n",encoding="utf-8");
     manifest=tmp_path/"project.sum";
     manifest.write_text(json.dumps({"sum_project":1,"name":"numpy-demo","entrypoint":"main.py","sources":["main.py"],"build":{"android":{"backend":"p4a","requirements":["python3","sdl2","numpy"]}}}),encoding="utf-8");
     _,command=prepare_android(manifest,backend="p4a");
-    local=Path(next(item.split("=",1)[1] for item in command if item.startswith("--local-recipes=")));
-    recipe=(local/"numpy"/"__init__.py").read_text(encoding="utf-8");
-    note=(local/"numpy"/"SUM-NUMPY-PATCH.txt").read_text(encoding="utf-8");
-    assert 'version = "v2.3.0"' in recipe;
-    assert "def prebuild_arch(self, arch):" in recipe;
-    assert 'marker + "\\n#include <unordered_map>"' in recipe;
-    assert "unordered_map" in note;
+    requirements=next(item for item in command if item.startswith("--requirements="));
+    assert "python3==3.13.13" in requirements;
+    assert "hostpython3==3.13.13" in requirements;
+    assert "numpy==2.2.3" in requirements;
+    assert not any(item.startswith("--local-recipes=") for item in command);
 
 def test_a26_p4a_transient_venv_uses_profile_storage(tmp_path):
     import sumbuild.backends as backends;
@@ -467,3 +468,33 @@ def test_a26_profile_lock_rejects_live_owner_and_recovers_stale(tmp_path,monkeyp
     assert second.exists();
     backends._release_p4a_profile_lock(second);
     assert not second.exists();
+
+
+def test_a27_android_science_matrix_is_pinned(tmp_path):
+    import json;
+    main=tmp_path/"main.py"; main.write_text("print(1)\n",encoding="utf-8");
+    manifest=tmp_path/"project.sum";
+    manifest.write_text(json.dumps({"sum_project":1,"name":"science-demo","language":"python","entrypoint":"main.py","sources":["main.py"],"build":{"android":{"backend":"p4a","requirements":["python3","sdl2","rich","numpy","pandas","matplotlib"]}}}),encoding="utf-8");
+    _directory,command=prepare_android(manifest,tmp_path / "stage",backend="p4a");
+    requirements=next(item for item in command if item.startswith("--requirements="));
+    assert "python3==3.13.13" in requirements;
+    assert "hostpython3==3.13.13" in requirements;
+    assert "numpy==2.2.3" in requirements;
+    assert "pandas==2.2.3" in requirements;
+    assert "matplotlib==3.10.1" in requirements;
+    assert not any(item.startswith("--local-recipes=") for item in command);
+
+
+def test_a27_full_runtime_core_requirements_are_re_pinned():
+    import sumbuild.backends as backends;
+    requirements=backends._pin_android_runtime_requirements(backends.SUM_ANDROID_CORE_REQUIREMENTS);
+    assert "python3==3.13.13" in requirements;
+    assert "hostpython3==3.13.13" in requirements;
+    assert "numpy==2.2.3" in requirements;
+    assert "pandas==2.2.3" in requirements;
+    assert "matplotlib==3.10.1" in requirements;
+
+
+def test_a27_profile_revision_differs_from_a26():
+    from sumbuild.backends import SUM_P4A_PROFILE_REVISION;
+    assert SUM_P4A_PROFILE_REVISION.startswith("a27-");

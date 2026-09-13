@@ -159,3 +159,8 @@ Android graphical applications use the SUM SDL2/ctypes path. The runtime now pro
 ## 0.1.0a20 p4a robustness
 
 See `README-a20.md` for requirement canonicalization and transient p4a venv reset behavior.
+
+
+## a27
+
+See `README-a27.md` for the Android scientific runtime compatibility pins.

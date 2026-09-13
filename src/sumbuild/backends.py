@@ -49,7 +49,11 @@ SUM_ANDROID_ECOSYSTEM_PACKAGES=SUM_ECOSYSTEM_PACKAGES;
 SUM_PYTHON_BASE_REQUIREMENTS=("rich","numpy","pandas","matplotlib");
 SUM_DATA_SCIENCE_REQUIREMENTS=("numpy","pandas","matplotlib");
 
-SUM_P4A_PROFILE_REVISION="a26-science-1";
+SUM_ANDROID_PYTHON_VERSION="3.13.13";
+SUM_ANDROID_NUMPY_VERSION="2.2.3";
+SUM_ANDROID_PANDAS_VERSION="2.2.3";
+SUM_ANDROID_MATPLOTLIB_VERSION="3.10.1";
+SUM_P4A_PROFILE_REVISION="a27-android-science-pydroid-matrix-1";
 
 SUM_ANDROID_CORE_REQUIREMENTS=(
     "python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify",
@@ -236,15 +240,46 @@ def _canonical_android_requirement(value):
     return canonical + suffix;
 
 
+def _android_requirement_name(value):
+    text=_canonical_android_requirement(value);
+    stop=len(text);
+    for marker in ("[","=","<",">","!","~","@",";"):
+        pos=text.find(marker);
+        if pos >= 0: stop=min(stop,pos);
+    return text[:stop];
+
+
+def _pin_android_runtime_requirements(values):
+    """Pin the Android scientific runtime to the known-good SUM matrix.
+
+    Linux remains unconstrained.  Android deliberately tracks the versions
+    validated together on-device (Python 3.13.13, NumPy/pandas 2.2.3 and
+    Matplotlib 3.10.1) instead of p4a's newest recipe defaults.
+    """;
+    pins={
+        "python3":"python3=={}".format(SUM_ANDROID_PYTHON_VERSION),
+        "hostpython3":"hostpython3=={}".format(SUM_ANDROID_PYTHON_VERSION),
+        "numpy":"numpy=={}".format(SUM_ANDROID_NUMPY_VERSION),
+        "pandas":"pandas=={}".format(SUM_ANDROID_PANDAS_VERSION),
+        "matplotlib":"matplotlib=={}".format(SUM_ANDROID_MATPLOTLIB_VERSION),
+    };
+    result=[];
+    for item in values:
+        text=_canonical_android_requirement(item);
+        name=_android_requirement_name(text);
+        if name in pins: text=pins[name];
+        if text and text not in result: result.append(text);
+    if any(_android_requirement_name(item) == "python3" for item in result):
+        host=pins["hostpython3"];
+        if not any(_android_requirement_name(item) == "hostpython3" for item in result): result.insert(1,host);
+    return result;
+
+
 def _android_requirements(project):
     android=project.build.get("android", {});
     values=android.get("requirements", ["python3","sdl2"]);
     if not isinstance(values, list) or not values: raise BuildError("build.android.requirements must be a non-empty list");
-    result=[];
-    for item in values:
-        text=_canonical_android_requirement(item);
-        if text and text not in result: result.append(text);
-    return result;
+    return _pin_android_runtime_requirements(values);
 
 
 def _android_permissions(project):
@@ -784,8 +819,12 @@ def prepare_android(project, directory=None, backend=None, details=False):
     arch=str(settings.get("arch","arm64-v8a"));
     requirements=_android_requirements(project);
     if project.language in ("sumbasic","sumx","sumr") or str(settings.get("runtime","")).lower() in ("sumide","sum-runtime","sum-full"):
+        existing_names={_android_requirement_name(item) for item in requirements};
         for item in SUM_ANDROID_CORE_REQUIREMENTS:
-            if item not in requirements: requirements.append(item);
+            name=_android_requirement_name(item);
+            if name not in existing_names:
+                requirements.append(item); existing_names.add(name);
+    requirements=_pin_android_runtime_requirements(requirements);
     permissions=_android_permissions(project);
     icon=_android_icon(project,directory);
     runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"icon":"sum" if icon and icon.name == "sum-default-icon.png" else (str(icon.name) if icon else None),"font_size":project.interface.get("font_size","auto"),"font_auto":project.interface.get("font_auto",{}),"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto"}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"exit_button":project.interface.get("exit_button","auto"),"transpile":stage};
@@ -793,8 +832,6 @@ def prepare_android(project, directory=None, backend=None, details=False):
     if selected == "p4a":
         storage=_p4a_profile_storage(project,requirements,arch);
         command=["p4a","apk","--private",str(directory),"--package={}".format(package),"--name={}".format(project.name),"--version={}".format(project.version),"--bootstrap=sdl2","--requirements={}".format(",".join(requirements)),"--arch={}".format(arch),"--storage-dir={}".format(storage)];
-        if "numpy" in requirements:
-            local_recipes=_write_numpy_android_recipe(directory); command.append("--local-recipes={}".format(local_recipes));
         if mode == "debug": command.append("--debug");
         if icon is not None: command.append("--icon={}".format(icon));
         for permission in permissions: command.append("--permission={}".format(permission));
