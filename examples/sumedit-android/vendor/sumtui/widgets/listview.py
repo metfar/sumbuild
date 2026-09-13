@@ -19,5 +19,20 @@
 #  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 #  MA 02110-1301, USA.
 #  
-"""SUM project/build orchestration.""";
-__version__="0.1.0a6";
+#
+#import warnings;
+#warnings.filterwarnings("ignore", category=UserWarning);
+from .table import Column, TableView;
+
+
+class ListView(TableView):
+    def __init__(self, items=None, title="", on_change=None, on_activate=None, theme=None):
+        super().__init__([Column(title or "", ratio=1)], rows=None, on_change=on_change, on_activate=on_activate, theme=theme, show_selection_marker=True);
+        for item in list(items or []):
+            if isinstance(item, tuple) and len(item) == 2:
+                self.add_row([str(item[0])], value=item[1]);
+            else:
+                self.add_row([str(item)], value=item);
+
+    def add_item(self, label, value=None):
+        return self.add_row([str(label)], value=label if value is None else value);

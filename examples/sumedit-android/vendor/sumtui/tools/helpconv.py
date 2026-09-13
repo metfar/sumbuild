@@ -19,5 +19,23 @@
 #  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 #  MA 02110-1301, USA.
 #  
-"""SUM project/build orchestration.""";
-__version__="0.1.0a6";
+#
+"""Compatibility wrappers for help conversion commands now owned by SumDoc.""";
+
+
+def markdown2helpdb(argv=None):
+    try:
+        from sumdoc.common import GlobalOptions;
+        from sumdoc.tools.helpconv import markdown2helpdb_main;
+    except ImportError as error:
+        raise RuntimeError("markdown2helpdb moved to sumdoc>=0.2.1") from error;
+    return markdown2helpdb_main(argv, GlobalOptions());
+
+
+def helpdb2markdown(argv=None):
+    try:
+        from sumdoc.common import GlobalOptions;
+        from sumdoc.tools.helpconv import helpdb2markdown_main;
+    except ImportError as error:
+        raise RuntimeError("helpdb2markdown moved to sumdoc>=0.2.1") from error;
+    return helpdb2markdown_main(argv, GlobalOptions());

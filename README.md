@@ -21,7 +21,7 @@ Current executable backends build Python entrypoints. sumBASIC, sumX and sumR ru
 
 <p align=center><b>- oOo -</b></p>
 
-## 0.1.0a5 Android / SumGUI experiment
+## 0.1.0a6 Android / SumGUI experiment
 
 `sumBuild` can now stage an Android build with `python-for-android` (`p4a`) and a first source-lowering pass for the declarative `sumgui.easy` subset. The desktop source is preserved as `main.desktop.py`; generated Android `main.py` uses the validated direct SDL2/ctypes path and does not depend on PySDL2.
 
@@ -42,13 +42,13 @@ Runtime conventions in the generated SDL2 application:
 - orientation defaults to `auto`; explicit `portrait`/`landscape` are emitted only when requested.
 
 
-## 0.1.0a5 Android toolchain auto-detection
+## 0.1.0a6 Android toolchain auto-detection
 
 Android builds no longer require the caller to export ANDROIDSDK/ANDROIDNDK/JAVA_HOME manually.
 `sumBuild` resolves a coherent SDK/NDK/JDK environment, preferring `~/Android/Sdk`, the
 Buildozer NDK cache, and JDK 17. `build.android` may override `sdk_dir`, `ndk_dir`, `java_home`,
 `api`, and `ndk_api`. `--prepare` reports the resolved toolchain.
 
-## 0.1.0a5 Android runtime correction
+## 0.1.0a6 Android runtime correction
 
 The generated Android SUM/SDL2 runtime now follows the experimentally validated p4a path more closely: it loads `libSDL2.so` directly (no `ctypes.util.find_library()`), creates the SDLActivity window fullscreen while preserving SUM logical coordinates, uses the same three-step renderer fallback as the working ctypes diagnostic, and displays a native SDL error dialog if startup raises after SDL2 is loaded.

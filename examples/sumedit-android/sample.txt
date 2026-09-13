@@ -1,0 +1,14 @@
+SUMEDIT / ANDROID
+
+Este archivo viene dentro del APK para la primera prueba compleja.
+
+Pruebas sugeridas:
+- tocar el editor y mover el cursor;
+- usar KEY para mostrar/ocultar el teclado;
+- escribir texto y Unicode;
+- abrir menus;
+- girar portrait / landscape;
+- usar EXIT para cerrar.
+
+F10 sigue siendo salida en desktop.
+Escape queda libre para sumedit.

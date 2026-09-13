@@ -14,10 +14,11 @@
 #  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 #  GNU General Public License for more details.
 #  
-#  You should have received a copy of the GNU General Public License
-#  along with this program; if not, write to the Free Software
-#  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
-#  MA 02110-1301, USA.
-#  
-"""SUM project/build orchestration.""";
-__version__="0.1.0a6";
+
+from sumui import conio;
+
+
+def install(stdin=None, stdout=None):
+    backend=conio.TerminalConioBackend(stdin=stdin,stdout=stdout);
+    conio.use_backend(backend);
+    return backend;

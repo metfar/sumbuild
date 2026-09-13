@@ -19,5 +19,9 @@
 #  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 #  MA 02110-1301, USA.
 #  
-"""SUM project/build orchestration.""";
-__version__="0.1.0a6";
+#
+#import warnings;
+#warnings.filterwarnings("ignore", category=UserWarning);
+from .input import AnsiDecoder, PosixInput, WindowsInput, create_input_backend;
+
+__all__ = ["AnsiDecoder", "PosixInput", "WindowsInput", "create_input_backend"];

@@ -73,4 +73,5 @@ def test_sumgui_easy_android_transpile(tmp_path):
     assert "SDLK_F10" in generated;
     assert "SDL_SetWindowFullscreen" in generated;
     assert "--requirements=python3,sdl2" in command;
-    assert not any(item.startswith("--orientation=") for item in command);
+    orientations=[item for item in command if item.startswith("--orientation=")];
+    assert orientations == ["--orientation=portrait","--orientation=landscape","--orientation=portrait-reverse","--orientation=landscape-reverse"];

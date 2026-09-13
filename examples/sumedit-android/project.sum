@@ -1,0 +1,39 @@
+{
+  "sum_project": 1,
+  "name": "sumedit-android",
+  "version": "0.1.0",
+  "language": "python",
+  "entrypoint": "main.py",
+  "sources": ["main.py", "vendor"],
+  "resources": ["sample.txt"],
+  "dependencies": ["sumui", "sumtui", "sumgui"],
+  "interface": {
+    "backend": "sumgui",
+    "orientation": "auto",
+    "exit_button": "auto",
+    "keyboard": {
+      "system": true,
+      "show_button": "auto",
+      "accessory": "auto",
+      "show_hide": true
+    },
+    "shortcuts": {
+      "exit": "F10",
+      "fullscreen": "ALT+ENTER"
+    }
+  },
+  "build": {
+    "targets": ["android"],
+    "console": false,
+    "android": {
+      "backend": "p4a",
+      "package_name": "sumedit",
+      "package_domain": "org.sumecosystem",
+      "runtime": "sum-sdl2",
+      "api": 33,
+      "ndk_api": 24,
+      "arch": "arm64-v8a",
+      "requirements": ["python3", "sdl2", "rich", "pygments", "markdown-it-py", "mdurl"]
+    }
+  }
+}

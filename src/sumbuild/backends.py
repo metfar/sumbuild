@@ -264,16 +264,26 @@ def prepare_android(project, directory=None, backend=None, details=False):
     mode=str(settings.get("mode","debug")).lower();
     arch=str(settings.get("arch","arm64-v8a"));
     requirements=_android_requirements(project);
-    runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"transpile":stage};
+    runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"exit_button":project.interface.get("exit_button","auto"),"transpile":stage};
     (directory / "sum-android.json").write_text(__import__("json").dumps(runtime,indent=2,ensure_ascii=False)+"\n",encoding="utf-8");
     if selected == "p4a":
         command=["p4a","apk","--private",str(directory),"--package={}".format(package),"--name={}".format(project.name),"--version={}".format(project.version),"--bootstrap=sdl2","--requirements={}".format(",".join(requirements)),"--arch={}".format(arch)];
         if mode == "debug": command.append("--debug");
-        if orientation != "auto": command.append("--orientation={}".format(orientation));
+        if orientation == "auto":
+            # p4a 2026 accepts multiple allowed orientations.  Supplying all
+            # four makes the manifest unspecified and feeds SDL the full
+            # orientation hint set, so the app follows device rotation.
+            for item in ("portrait","landscape","portrait-reverse","landscape-reverse"):
+                command.append("--orientation={}".format(item));
+        elif orientation == "sensor":
+            for item in ("portrait","landscape","portrait-reverse","landscape-reverse"):
+                command.append("--orientation={}".format(item));
+        else: command.append("--orientation={}".format(orientation));
         result=(directory,command,selected,stage);
         return result if details else result[:2];
     spec="""[app]\ntitle = {title}\npackage.name = {package_name}\npackage.domain = {domain}\nsource.dir = .\nsource.include_exts = py,png,jpg,jpeg,gif,svg,json,txt,md,csv,rds,sum,bas,prg,R,yaml,yml\nversion = {version}\nrequirements = {requirements}\nfullscreen = 0\n\n[buildozer]\nlog_level = 2\nwarn_on_root = 1\n""".format(title=project.name,package_name=package_name,domain=domain,version=project.version,requirements=",".join(requirements));
-    if orientation != "auto": spec=spec.replace("fullscreen = 0","orientation = {}\nfullscreen = 0".format(orientation));
+    if orientation in ("auto","sensor"): spec=spec.replace("fullscreen = 0","orientation = all\nfullscreen = 0");
+    else: spec=spec.replace("fullscreen = 0","orientation = {}\nfullscreen = 0".format(orientation));
     (directory / "buildozer.spec").write_text(spec,encoding="utf-8");
     result=(directory,["buildozer","android",mode],selected,stage);
     return result if details else result[:2];
