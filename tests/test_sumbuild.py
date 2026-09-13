@@ -382,3 +382,88 @@ def test_a25_user_import_inventory_is_preserved():
     for name in ("numpy","pandas","matplotlib","requests","scipy","sympy","yaml"):
         assert name in inventory;
     assert "seaborn" not in inventory;
+
+
+def test_a26_p4a_uses_isolated_profile_storage(tmp_path,monkeypatch):
+    import json;
+    import sumbuild.backends as backends;
+    fake_home=tmp_path/"home"; fake_home.mkdir();
+    monkeypatch.setattr(backends.Path,"home",classmethod(lambda cls: fake_home));
+    main=tmp_path/"main.py"; main.write_text("print(1)\n",encoding="utf-8");
+    manifest=tmp_path/"project.sum";
+    manifest.write_text(json.dumps({"sum_project":1,"name":"demo","entrypoint":"main.py","sources":["main.py"],"build":{"android":{"backend":"p4a","requirements":["python3","sdl2"]}}}),encoding="utf-8");
+    _,command=backends.prepare_android(manifest,backend="p4a");
+    storage=next(item.split("=",1)[1] for item in command if item.startswith("--storage-dir="));
+    assert storage.startswith(str(fake_home/".cache"/"sumbuild"/"p4a"));
+
+
+def test_a26_p4a_profile_changes_with_requirements(tmp_path,monkeypatch):
+    import json;
+    import sumbuild.backends as backends;
+    fake_home=tmp_path/"home"; fake_home.mkdir();
+    monkeypatch.setattr(backends.Path,"home",classmethod(lambda cls: fake_home));
+    main=tmp_path/"main.py"; main.write_text("print(1)\n",encoding="utf-8");
+    def command_for(requirements,name):
+        manifest=tmp_path/(name+".sum");
+        manifest.write_text(json.dumps({"sum_project":1,"name":name,"entrypoint":"main.py","sources":["main.py"],"build":{"android":{"backend":"p4a","requirements":requirements}}}),encoding="utf-8");
+        return backends.prepare_android(manifest,backend="p4a")[1];
+    one=command_for(["python3","sdl2"],"one");
+    two=command_for(["python3","sdl2","numpy"],"two");
+    p1=next(item for item in one if item.startswith("--storage-dir="));
+    p2=next(item for item in two if item.startswith("--storage-dir="));
+    assert p1 != p2;
+
+
+def test_a26_numpy_uses_local_recipe_with_unordered_map_prebuild_fix(tmp_path):
+    import json;
+    from sumbuild.backends import prepare_android;
+    main=tmp_path/"main.py"; main.write_text("import numpy\n",encoding="utf-8");
+    manifest=tmp_path/"project.sum";
+    manifest.write_text(json.dumps({"sum_project":1,"name":"numpy-demo","entrypoint":"main.py","sources":["main.py"],"build":{"android":{"backend":"p4a","requirements":["python3","sdl2","numpy"]}}}),encoding="utf-8");
+    _,command=prepare_android(manifest,backend="p4a");
+    local=Path(next(item.split("=",1)[1] for item in command if item.startswith("--local-recipes=")));
+    recipe=(local/"numpy"/"__init__.py").read_text(encoding="utf-8");
+    note=(local/"numpy"/"SUM-NUMPY-PATCH.txt").read_text(encoding="utf-8");
+    assert 'version = "v2.3.0"' in recipe;
+    assert "def prebuild_arch(self, arch):" in recipe;
+    assert 'marker + "\\n#include <unordered_map>"' in recipe;
+    assert "unordered_map" in note;
+
+def test_a26_p4a_transient_venv_uses_profile_storage(tmp_path):
+    import sumbuild.backends as backends;
+    storage=tmp_path/"profile";
+    venv=storage/"build"/"venv"; venv.mkdir(parents=True); (venv/"sentinel").write_text("x",encoding="utf-8");
+    status=backends._reset_p4a_transient_venv({},storage);
+    assert status["reset"] is True;
+    assert status["path"] == str(venv);
+    assert not venv.exists();
+
+
+def test_a26_repairs_recipe_git_locks_only_inside_profile(tmp_path):
+    import sumbuild.backends as backends;
+    storage=tmp_path/"profile";
+    lock=storage/"packages"/"numpy"/"numpy"/".git"/"shallow.lock";
+    lock.parent.mkdir(parents=True); lock.write_text("",encoding="utf-8");
+    outside=tmp_path/"outside.lock"; outside.write_text("",encoding="utf-8");
+    removed=backends._repair_p4a_git_locks(storage);
+    assert str(lock) in removed;
+    assert not lock.exists();
+    assert outside.exists();
+
+
+def test_a26_profile_lock_rejects_live_owner_and_recovers_stale(tmp_path,monkeypatch):
+    import os;
+    import sumbuild.backends as backends;
+    storage=tmp_path/"profile"; storage.mkdir();
+    first=backends._acquire_p4a_profile_lock(storage);
+    try:
+        try: backends._acquire_p4a_profile_lock(storage);
+        except backends.BuildError as exc: assert "another sumBuild" in str(exc);
+        else: raise AssertionError("live p4a profile lock should be rejected");
+    finally:
+        backends._release_p4a_profile_lock(first);
+    stale=storage/".sumbuild-build.lock"; stale.write_text("99999999",encoding="ascii");
+    second=backends._acquire_p4a_profile_lock(storage);
+    assert second.exists();
+    backends._release_p4a_profile_lock(second);
+    assert not second.exists();

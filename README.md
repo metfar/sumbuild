@@ -1,3 +1,5 @@
+See `README-a26.md` for the isolated p4a scientific-runtime profile and NumPy Android compatibility fix.
+
 # sumBuild
 
 See `README-a24.md` for the Linux/Android target scope and the full NumPy/pandas/Matplotlib runtime policy.
@@ -23,7 +25,7 @@ Implemented:
 
 The build layer never installs toolchains automatically. Missing optional builders are diagnostics, not project corruption.
 
-Active executable targets in 0.1.0a25 are Linux and Android. Linux now stages SUM runtime adapters for Python, sumBASIC, sumX, sumR and the existing sumIDE `sumbash` shell profile; Android keeps the SUM language adapters already under test. Windows/macOS and JS/PHP/Ruby/HTML adapters are paused. Full SUM runtime bundles explicitly carry Rich, NumPy, pandas and Matplotlib; Seaborn is deferred. The user import inventory is preserved as examples/imps3.txt for staged dependency expansion.
+Active executable targets in 0.1.0a26 are Linux and Android. Linux now stages SUM runtime adapters for Python, sumBASIC, sumX, sumR and the existing sumIDE `sumbash` shell profile; Android keeps the SUM language adapters already under test. Windows/macOS and JS/PHP/Ruby/HTML adapters are paused. Full SUM runtime bundles explicitly carry Rich, NumPy, pandas and Matplotlib; Seaborn is deferred. The user import inventory is preserved as examples/imps3.txt for staged dependency expansion.
 
 <p align=center><b>- oOo -</b></p>
 

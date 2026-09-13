@@ -29,6 +29,7 @@ import struct;
 import zlib;
 import binascii;
 import importlib.util;
+import hashlib;
 from .project import SumProject;
 from .transpile import TranspileError, transpile_sumgui_easy;
 
@@ -47,6 +48,8 @@ SUM_ANDROID_ECOSYSTEM_PACKAGES=SUM_ECOSYSTEM_PACKAGES;
 
 SUM_PYTHON_BASE_REQUIREMENTS=("rich","numpy","pandas","matplotlib");
 SUM_DATA_SCIENCE_REQUIREMENTS=("numpy","pandas","matplotlib");
+
+SUM_P4A_PROFILE_REVISION="a26-science-1";
 
 SUM_ANDROID_CORE_REQUIREMENTS=(
     "python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify",
@@ -623,6 +626,148 @@ def _android_icon(project, directory):
     target=Path(directory) / ("app-icon" + source.suffix.lower()); shutil.copy2(str(source),str(target)); return target;
 
 
+def _p4a_profile_storage(project, requirements, arch):
+    # Keep incompatible p4a distributions/build trees from sharing mutable state.
+    settings=_android_settings(project);
+    configured=settings.get("p4a_storage_dir");
+    if configured:
+        root=Path(str(configured)).expanduser();
+        if not root.is_absolute(): root=(project.root / root);
+        return root.resolve();
+    api=str(settings.get("api",os.environ.get("ANDROIDAPI",33)));
+    ndk_api=str(settings.get("ndk_api",os.environ.get("NDKAPI",24)));
+    normalized=sorted(_canonical_android_requirement(item) for item in requirements);
+    payload="|".join((SUM_P4A_PROFILE_REVISION,"api="+api,"ndkapi="+ndk_api,"arch="+str(arch),"requirements="+",".join(normalized)));
+    digest=hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16];
+    return (Path.home() / ".cache" / "sumbuild" / "p4a" / digest).resolve();
+
+
+def _write_numpy_android_recipe(directory):
+    # NumPy 2.3.0 uses std::unordered_map but its unique.cpp omits <unordered_map>.
+    # Stage a local p4a recipe with a narrow pre-build source fix.
+    root=Path(directory).parent / "p4a-local-recipes";
+    if root.exists(): shutil.rmtree(str(root));
+    recipe_dir=root / "numpy"; recipe_dir.mkdir(parents=True,exist_ok=True);
+    recipe_text='''from pythonforandroid.recipe import Recipe, MesonRecipe
+from os.path import join
+import shutil
+
+
+class NumpyRecipe(MesonRecipe):
+    version = "v2.3.0"
+    url = "git+https://github.com/numpy/numpy"
+    extra_build_args = ["-Csetup-args=-Dblas=none", "-Csetup-args=-Dlapack=none"]
+    opt_depends = ["libopenblas"]
+    need_stl_shared = True
+    min_ndk_api_support = 24
+
+    def prebuild_arch(self, arch):
+        super().prebuild_arch(arch)
+        source = join(self.get_build_dir(arch.arch), "numpy/_core/src/multiarray/unique.cpp")
+        with open(source, "r", encoding="utf-8") as stream:
+            text = stream.read()
+        if "#include <unordered_map>" not in text:
+            marker = "#include <unordered_set>"
+            if marker not in text:
+                raise RuntimeError("NumPy unique.cpp layout changed: unordered_set include not found")
+            text = text.replace(marker, marker + "\\n#include <unordered_map>", 1)
+            with open(source, "w", encoding="utf-8") as stream:
+                stream.write(text)
+
+    def get_include(self, arch):
+        return join(self.ctx.get_python_install_dir(arch.arch), "numpy/_core/include")
+
+    def get_recipe_meson_options(self, arch):
+        options = super().get_recipe_meson_options(arch)
+        options["properties"]["longdouble_format"] = (
+            "IEEE_DOUBLE_LE" if arch.arch in ["armeabi-v7a", "x86"] else "IEEE_QUAD_LE"
+        )
+        return options
+
+    def get_recipe_env(self, arch, **kwargs):
+        env = super().get_recipe_env(arch, **kwargs)
+        env["_PYTHON_HOST_PLATFORM"] = arch.command_prefix
+        env["NPY_DISABLE_SVML"] = "1"
+        env["TARGET_PYTHON_EXE"] = join(
+            Recipe.get_recipe("python3", self.ctx).get_build_dir(arch.arch),
+            "android-build", "python",
+        )
+        blas_dir = join(Recipe.get_recipe("libopenblas", self.ctx).get_build_dir(arch.arch), "build")
+        env["CXXFLAGS"] = env.get("CXXFLAGS", "") + f" -I{blas_dir} -L{join(blas_dir, 'lib')}"
+        if "libopenblas" in self.ctx.recipe_build_order:
+            self.extra_build_args = [
+                "-Csetup-args=-Dblas=auto",
+                "-Csetup-args=-Dlapack=auto",
+                "-Csetup-args=-Dallow-noblas=False",
+            ]
+        return env
+
+    def get_hostrecipe_env(self, arch=None):
+        env = super().get_hostrecipe_env(arch=arch)
+        env["RANLIB"] = shutil.which("ranlib")
+        return env
+
+
+recipe = NumpyRecipe()
+''';
+    patch_note='''NumPy 2.3.0 Android compatibility note
+
+The local recipe inserts #include <unordered_map> after #include <unordered_set>
+in numpy/_core/src/multiarray/unique.cpp during prebuild_arch().
+''';
+    (recipe_dir / "__init__.py").write_text(recipe_text,encoding="utf-8");
+    (recipe_dir / "SUM-NUMPY-PATCH.txt").write_text(patch_note,encoding="utf-8");
+    return root.resolve();
+
+
+def _p4a_storage_from_command(command):
+    for item in command:
+        if str(item).startswith("--storage-dir="): return Path(str(item).split("=",1)[1]).resolve();
+    return None;
+
+
+def _acquire_p4a_profile_lock(storage_dir):
+    # Prevent two sumBuild processes from mutating the same p4a profile/cache.
+    root=Path(storage_dir); root.mkdir(parents=True,exist_ok=True);
+    path=root / ".sumbuild-build.lock";
+    for _attempt in range(2):
+        try:
+            fd=os.open(str(path),os.O_CREAT | os.O_EXCL | os.O_WRONLY,0o600);
+            os.write(fd,str(os.getpid()).encode("ascii")); os.close(fd);
+            return path;
+        except FileExistsError:
+            try: pid=int(path.read_text(encoding="ascii").strip());
+            except (OSError,ValueError): pid=None;
+            alive=False;
+            if pid:
+                try: os.kill(pid,0); alive=True;
+                except ProcessLookupError: alive=False;
+                except PermissionError: alive=True;
+            if alive: raise BuildError("another sumBuild Android build is using p4a profile {} (pid {})".format(root,pid));
+            try: path.unlink();
+            except FileNotFoundError: pass;
+    raise BuildError("could not acquire p4a profile lock: {}".format(path));
+
+
+def _release_p4a_profile_lock(path):
+    if path is None: return;
+    try: Path(path).unlink();
+    except FileNotFoundError: pass;
+
+
+def _repair_p4a_git_locks(storage_dir):
+    # p4a's git recipe cache can leave shallow.lock behind after an aborted fetch.
+    root=Path(storage_dir); removed=[];
+    packages=root / "packages";
+    if not packages.exists(): return removed;
+    for lock in packages.glob("**/.git/*.lock"):
+        try:
+            lock.unlink(); removed.append(str(lock));
+        except FileNotFoundError:
+            pass;
+    return removed;
+
+
 def prepare_android(project, directory=None, backend=None, details=False):
     project=project if isinstance(project, SumProject) else SumProject.load(project);
     selected=select_android_backend(project,backend);
@@ -646,7 +791,10 @@ def prepare_android(project, directory=None, backend=None, details=False):
     runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"icon":"sum" if icon and icon.name == "sum-default-icon.png" else (str(icon.name) if icon else None),"font_size":project.interface.get("font_size","auto"),"font_auto":project.interface.get("font_auto",{}),"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto"}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"exit_button":project.interface.get("exit_button","auto"),"transpile":stage};
     (directory / "sum-android.json").write_text(__import__("json").dumps(runtime,indent=2,ensure_ascii=False)+"\n",encoding="utf-8");
     if selected == "p4a":
-        command=["p4a","apk","--private",str(directory),"--package={}".format(package),"--name={}".format(project.name),"--version={}".format(project.version),"--bootstrap=sdl2","--requirements={}".format(",".join(requirements)),"--arch={}".format(arch)];
+        storage=_p4a_profile_storage(project,requirements,arch);
+        command=["p4a","apk","--private",str(directory),"--package={}".format(package),"--name={}".format(project.name),"--version={}".format(project.version),"--bootstrap=sdl2","--requirements={}".format(",".join(requirements)),"--arch={}".format(arch),"--storage-dir={}".format(storage)];
+        if "numpy" in requirements:
+            local_recipes=_write_numpy_android_recipe(directory); command.append("--local-recipes={}".format(local_recipes));
         if mode == "debug": command.append("--debug");
         if icon is not None: command.append("--icon={}".format(icon));
         for permission in permissions: command.append("--permission={}".format(permission));
@@ -681,16 +829,11 @@ def _find_android_apk(directory, selected):
 
 
 
-def _reset_p4a_transient_venv(env=None):
-    """Remove p4a's disposable pip/Cython venv before each build.
-
-    python-for-android recreates this directory itself.  Reusing it across
-    Python/pip upgrades can leave executable scripts and pip internals from
-    different versions mixed together, so a successful ``pip --version``
-    probe is not strong enough to prove the environment is reusable.
-    """;
+def _reset_p4a_transient_venv(env=None, storage_dir=None):
+    """Remove p4a's disposable pip/Cython venv before each build.""";
     _=env;
-    base=Path.home() / ".local" / "share" / "python-for-android" / "build" / "venv";
+    root=Path(storage_dir) if storage_dir is not None else (Path.home() / ".local" / "share" / "python-for-android");
+    base=root / "build" / "venv";
     existed=base.exists();
     if existed: shutil.rmtree(str(base),ignore_errors=True);
     return {"checked":True,"repaired":existed,"reset":existed,"path":str(base)};
@@ -707,16 +850,24 @@ def build_android(project, prepare_only=False, backend=None):
     if prepare_only: return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"transpile":stage,"command":command,"artifact":None};
     executable=command[0];
     if not shutil.which(executable): raise BuildError("{} not found; run sumbuild --doctor or use --prepare".format(executable));
-    p4a_venv=None;
+    p4a_venv=None; p4a_storage=None; p4a_git_locks_removed=[]; p4a_profile_lock=None;
     if selected == "p4a":
-        p4a_venv=_reset_p4a_transient_venv(env);
+        p4a_storage=_p4a_storage_from_command(command);
+        if p4a_storage is not None:
+            p4a_profile_lock=_acquire_p4a_profile_lock(p4a_storage);
+            p4a_git_locks_removed=_repair_p4a_git_locks(p4a_storage);
+            if p4a_git_locks_removed: print("[INFO] removed stale python-for-android git lock(s): {}".format(len(p4a_git_locks_removed)),file=sys.stderr);
+        p4a_venv=_reset_p4a_transient_venv(env,p4a_storage);
         if p4a_venv.get("reset"): print("[INFO] reset python-for-android transient pip environment: {}".format(p4a_venv["path"]),file=sys.stderr);
-    try: subprocess.run(command,cwd=str(directory),check=True,env=env);
+    try:
+        subprocess.run(command,cwd=str(directory),check=True,env=env);
     except subprocess.CalledProcessError as exc:
         raise BuildError("{} build failed with exit status {}".format(selected,exc.returncode)) from exc;
+    finally:
+        _release_p4a_profile_lock(p4a_profile_lock);
     apk=_find_android_apk(directory,selected);
     if apk is None: raise BuildError("{} finished but no APK was found in staging".format(selected));
     dist=project.root / "dist"; dist.mkdir(parents=True,exist_ok=True);
     target=dist / "{}-{}-{}.apk".format(project.name,project.version,"debug" if str(_android_settings(project).get("mode","debug")) == "debug" else "release");
     shutil.copy2(str(apk),str(target));
-    return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"p4a_venv":p4a_venv,"transpile":stage,"command":command,"artifact":str(target)};
+    return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"p4a_storage":str(p4a_storage) if p4a_storage is not None else None,"p4a_venv":p4a_venv,"p4a_git_locks_removed":p4a_git_locks_removed,"transpile":stage,"command":command,"artifact":str(target)};
