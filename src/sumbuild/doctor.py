@@ -37,14 +37,20 @@ def _module(name, required=False):
 
 
 def report():
-    checks=[_command("python", True),_command("nuitka"),_command("pyinstaller"),_command("buildozer"),_command("java"),_command("javac"),_command("adb"),_command("sdkmanager"),_command("gradle"),_command("apksigner"),_command("zipalign"),_command("openssl"),_module("cryptography")];
+    checks=[
+        _command("python", True),
+        _command("nuitka"),_command("pyinstaller"),
+        _command("p4a"),_command("buildozer"),
+        _command("java"),_command("javac"),_command("adb"),_command("sdkmanager"),_command("gradle"),_command("apksigner"),_command("zipalign"),_command("openssl"),
+        _module("numpy"),_module("pandas"),_module("matplotlib"),_module("cryptography"),
+    ];
     status="healthy";
     if any(item["status"] == "fail" for item in checks): status="failed";
     elif any(item["status"] == "optional" for item in checks): status="partial";
     host=[];
     if shutil.which("nuitka"): host.append("nuitka");
     if shutil.which("pyinstaller"): host.append("pyinstaller");
-    return {"package":"sumbuild","python":sys.version.split()[0],"platform":platform.platform(),"status":status,"checks":checks,"capabilities":{"sumapp":True,"host_executable":bool(host),"host_backends":host,"preferred_host_backend":host[0] if host else None,"android_apk":bool(shutil.which("buildozer"))}};
+    return {"package":"sumbuild","python":sys.version.split()[0],"platform":platform.platform(),"status":status,"checks":checks,"capabilities":{"sumapp":True,"linux_executable":sys.platform.startswith("linux") and bool(host),"host_executable":sys.platform.startswith("linux") and bool(host),"host_backends":host,"preferred_host_backend":host[0] if host else None,"android_apk":bool(shutil.which("p4a") or shutil.which("buildozer")),"science_stack":all(importlib.util.find_spec(name) is not None for name in ("rich","numpy","pandas","matplotlib"))}};
 
 
 def print_report(data=None):
@@ -60,7 +66,8 @@ def print_report(data=None):
     print("");
     print("SUMAPP package     {}".format("available" if data["capabilities"]["sumapp"] else "unavailable"));
     host=data["capabilities"].get("host_backends", []);
-    print("Host executable    {}".format(", ".join(host) if host else "needs Nuitka or PyInstaller"));
+    print("Linux executable   {}".format(", ".join(host) if host and sys.platform.startswith("linux") else "needs Linux + Nuitka/PyInstaller"));
     print("Preferred backend  {}".format(data["capabilities"].get("preferred_host_backend") or "none"));
-    print("Android APK        {}".format("available" if data["capabilities"]["android_apk"] else "needs Buildozer/toolchain"));
+    print("Android APK        {}".format("available" if data["capabilities"]["android_apk"] else "needs p4a/Buildozer toolchain"));
+    print("NumPy/Pandas/MPL    {}".format("available" if data["capabilities"].get("science_stack") else "missing package(s)"));
     print("Status             {}".format(data["status"].upper()));

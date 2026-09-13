@@ -358,13 +358,15 @@ class GraphicalApplicationBackend:
             if fitted!=self.font_size: self._load_fonts(fitted,refine=False);
         else: self._load_fonts(self.font_size,refine=False);
         self.sdl.SDL_StopTextInput(); self._keyboard_visible=False;
-        self.clipboard_available=False; self.audio_available=False;
+        self.clipboard_available=False; self.audio_available=None;
         try:
             from sumtui.clipboard import clipboard as sum_clipboard;
             sum_clipboard._system=SDLClipboardAdapter(self.sdl); self.clipboard_available=True;
         except Exception: pass;
-        try: self.audio_available=bool(audio_service().available);
-        except Exception: self.audio_available=False;
+        # Audio is intentionally lazy.  Opening an SDL audio device while the
+        # editor itself starts is unnecessary and can abort some Android
+        # devices before the first visible frame.  beep()/BEEP/SOUND opens it
+        # on first use instead.
         self._resize();
 
     def _keyboard_reserved_pixels_for_cell(self,cell_height):

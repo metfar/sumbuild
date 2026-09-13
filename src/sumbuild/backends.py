@@ -37,13 +37,20 @@ class BuildError(RuntimeError):
     pass;
 
 
-SUM_ANDROID_ECOSYSTEM_PACKAGES=(
+SUM_ECOSYSTEM_PACKAGES=(
     "sumcore","sumdata","sumplot","sumr","sumpy","sumui","sumtui",
     "sumgui","sumide","sumbasic","sumx","sumdiff","sumdoc","sumkeyboard",
 );
 
+# Backwards-compatible name used by the Android staging code/tests.
+SUM_ANDROID_ECOSYSTEM_PACKAGES=SUM_ECOSYSTEM_PACKAGES;
+
+SUM_PYTHON_BASE_REQUIREMENTS=("rich","numpy","pandas","matplotlib");
+SUM_DATA_SCIENCE_REQUIREMENTS=("numpy","pandas","matplotlib");
+
 SUM_ANDROID_CORE_REQUIREMENTS=(
     "python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify",
+    "numpy","pandas","matplotlib",
 );
 
 
@@ -75,27 +82,109 @@ def _host_settings(project):
     return value;
 
 
-def prepare_host(project, directory=None, backend=None):
-    if not isinstance(project, SumProject): project=SumProject.load(project);
-    if project.language != "python": raise BuildError("host executable backend currently supports language=python; runtime adapters come next");
-    settings=_host_settings(project);
-    backend=select_host_backend(backend or settings.get("backend", "auto"));
-    directory=Path(directory or (project.root / "build" / "host" / backend)).resolve();
-    if directory.exists(): shutil.rmtree(str(directory));
-    _copy_payload(project, directory);
+def _host_runtime_entry(project,directory):
+    """Stage a Linux launcher for SUM language/runtime entrypoints.""";
+    directory=Path(directory);
+    _copy_payload(project,directory);
     entry=directory / project.entrypoint;
     if not entry.exists(): raise BuildError("entrypoint not staged: {}".format(project.entrypoint));
+    language=str(project.language or "python").strip().lower();
+    if language == "python": return entry;
+    launchers={
+        "sumbasic":"main_basic",
+        "sumx":"main_xbase",
+        "sumr":"main_r",
+        "bash":"main_bash",
+    };
+    if language not in launchers:
+        raise BuildError("Linux runtime adapter is not defined for language={}".format(language));
+    source_name=project.entrypoint;
+    wrapper=(
+        'import os,sys;\n'
+        'from pathlib import Path;\n'
+        'ROOT=Path(__file__).resolve().parent;\n'
+        'os.environ.setdefault("SUM_GUI_BACKEND","sdl2");\n'
+        'os.environ.setdefault("SUM_AUDIO_BACKEND","sdl2");\n'
+        'from sumide.app import {func};\n'
+        'raise SystemExit({func}(["--gui","--run",str(ROOT / {src!r})]));\n'
+    ).format(func=launchers[language],src=source_name);
+    main=directory / "_sum_linux_main.py";
+    main.write_text(wrapper,encoding="utf-8");
+    return main;
+
+
+def _host_full_bundle(project):
+    settings=_host_settings(project);
+    bundle=str(settings.get("bundle","auto") or "auto").strip().lower();
+    return bundle in ("sum-full","sum-runtime","full","sumide") or project.language in ("sumbasic","sumx","sumr","bash");
+
+
+def _check_host_bundle_modules():
+    missing=[];
+    for package in SUM_ECOSYSTEM_PACKAGES + SUM_PYTHON_BASE_REQUIREMENTS:
+        if importlib.util.find_spec(package) is None: missing.append(package);
+    if missing:
+        raise BuildError("Linux full runtime needs installed packages: {}".format(", ".join(missing)));
+
+
+def _nuitka_bundle_flags(project):
+    flags=[];
+    if not _host_full_bundle(project): return flags;
+    _check_host_bundle_modules();
+    for package in SUM_ECOSYSTEM_PACKAGES + SUM_PYTHON_BASE_REQUIREMENTS:
+        flags.append("--include-package={}".format(package));
+    for package in ("rich","numpy","pandas","matplotlib"):
+        flags.append("--include-package-data={}".format(package));
+    return flags;
+
+
+def _pyinstaller_bundle_flags(project):
+    flags=[];
+    if not _host_full_bundle(project): return flags;
+    _check_host_bundle_modules();
+    for package in SUM_ECOSYSTEM_PACKAGES + SUM_PYTHON_BASE_REQUIREMENTS:
+        flags.extend(["--collect-all",package]);
+    return flags;
+
+
+def _host_payload_data_flags(project,directory,backend):
+    """Keep editable non-Python sources/resources inside one-file bundles.""";
+    directory=Path(directory); flags=[];
+    for _source,rel in project.iter_payload_paths():
+        staged=directory / rel;
+        if not staged.exists(): continue;
+        if staged.suffix.lower() == ".py": continue;
+        if backend == "nuitka":
+            flags.append("--include-data-files={}={}".format(staged,rel));
+        else:
+            flags.extend(["--add-data","{}{}{}".format(staged,os.pathsep,rel)]);
+    return flags;
+
+
+def prepare_host(project, directory=None, backend=None):
+    if not isinstance(project, SumProject): project=SumProject.load(project);
+    if not sys.platform.startswith("linux"):
+        raise BuildError("Linux is the only active desktop target in this milestone; Android is the other active target");
+    settings=_host_settings(project);
+    backend=select_host_backend(backend or settings.get("backend", "auto"));
+    directory=Path(directory or (project.root / "build" / "linux" / backend)).resolve();
+    if directory.exists(): shutil.rmtree(str(directory));
+    directory.mkdir(parents=True,exist_ok=True);
+    entry=_host_runtime_entry(project,directory);
     dist=project.root / "dist"; dist.mkdir(parents=True, exist_ok=True);
     console=bool(project.build.get("console", True));
     if backend == "nuitka":
-        command=["nuitka","--onefile","--assume-yes-for-downloads","--output-dir={}".format(dist),"--output-filename={}".format(project.name),str(entry)];
-        if not console and sys.platform.startswith("win"): command.insert(2,"--windows-console-mode=disable");
+        command=["nuitka","--onefile","--assume-yes-for-downloads","--output-dir={}".format(dist),"--output-filename={}".format(project.name)];
+        command.extend(_nuitka_bundle_flags(project));
+        command.extend(_host_payload_data_flags(project,directory,backend));
+        command.append(str(entry));
     else:
         command=["pyinstaller","--noconfirm","--clean","--onefile","--name",project.name,"--distpath",str(dist),"--workpath",str(directory / ".pyinstaller"),"--specpath",str(directory)];
+        command.extend(_pyinstaller_bundle_flags(project));
+        command.extend(_host_payload_data_flags(project,directory,backend));
         if not console: command.append("--noconsole");
         command.append(str(entry));
     return directory, command, backend;
-
 
 def _host_artifact(project, backend):
     dist=project.root / "dist";

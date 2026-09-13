@@ -117,7 +117,7 @@ class SumProject:
     @classmethod
     def create(cls, root, name, entrypoint="main.py", language="python"):
         root=Path(root).resolve(); root.mkdir(parents=True, exist_ok=True);
-        data={"sum_project":PROJECT_FORMAT,"name":name,"version":"0.1.0","language":language,"entrypoint":entrypoint,"sources":[entrypoint],"resources":[],"dependencies":[],"interface":{"screen":"auto","orientation":"auto","font_size":"auto","font_auto":{"ideal_columns":72,"min_columns":40,"portrait_columns":72,"landscape_columns":80,"min_rows_keyboard":15,"min_px":18,"max_px":64},"keyboard":{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto","repeat":{"enabled":True,"delay_ms":400,"interval_ms":55}},"shortcuts":{"exit":"F10","fullscreen":"ALT+ENTER"}},"build":{"targets":["host","android"],"console":True,"host":{"backend":"auto"},"android":{"backend":"auto","requirements":["python3","sdl2"]}}};
+        data={"sum_project":PROJECT_FORMAT,"name":name,"version":"0.1.0","language":language,"entrypoint":entrypoint,"sources":[entrypoint],"resources":[],"dependencies":[],"interface":{"screen":"auto","orientation":"auto","font_size":"auto","font_auto":{"ideal_columns":72,"min_columns":40,"portrait_columns":72,"landscape_columns":80,"min_rows_keyboard":15,"min_px":18,"max_px":64},"keyboard":{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto","repeat":{"enabled":True,"delay_ms":400,"interval_ms":55}},"shortcuts":{"exit":"F10","fullscreen":"ALT+ENTER"}},"build":{"targets":["linux","android"],"console":True,"host":{"backend":"auto","bundle":"auto"},"android":{"backend":"auto","requirements":["python3","sdl2","rich","numpy","pandas","matplotlib"],"bundle":"auto"}}};
         project=cls(root, data);
         (root / PROJECT_FILENAME).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8");
         return project;
@@ -127,8 +127,8 @@ def infer_main_language(path):
     """Infer the SUM runtime from a single source filename.""";
     suffix=Path(path).suffix;
     lower=suffix.lower();
-    mapping={".py":"python",".bas":"sumbasic",".r":"sumr",".prg":"sumx"};
-    if lower not in mapping: raise ProjectError("--main supports .py, .bas, .r, and .prg; got {}".format(suffix or "<no extension>"));
+    mapping={".py":"python",".bas":"sumbasic",".r":"sumr",".prg":"sumx",".sh":"bash",".bash":"bash",".ksh":"bash"};
+    if lower not in mapping: raise ProjectError("--main supports .py, .bas, .r, .prg, .sh, .bash, and .ksh; got {}".format(suffix or "<no extension>"));
     return mapping[lower];
 
 
@@ -140,6 +140,8 @@ def _main_source_profile(path,language):
     if "sumide" in text: return "sumide";
     if "sumbasic" in text: return "sumbasic";
     if "sumx" in text: return "sumx";
+    if any(token in text for token in ("sumgui","sumui","sumtui","sumcore","sumdata","sumplot","sumpy","sumr","sumdiff","sumdoc","sumkeyboard")):
+        return "sum-full";
     return "generic";
 
 
@@ -152,13 +154,18 @@ def project_from_main(path,name=None,target="host",backend=None,storage="auto"):
     target=str(target or "host").lower();
     storage=str(storage or "auto").lower();
     if storage not in ("auto","all-files","scoped","none"): raise ProjectError("storage expects auto, all-files, scoped, or none");
-    if storage == "auto": storage="all-files" if profile in ("sumide","sumbasic","sumx","sumr") else "scoped";
+    if language == "bash" and target == "android":
+        raise ProjectError("sumbash is active for Linux; Android shell execution is paused because /system/bin/sh is not a Bash/KornShell runtime");
+    if storage == "auto": storage="all-files" if profile in ("sumide","sum-full","sumbasic","sumx","sumr") else "scoped";
+    science=["numpy","pandas","matplotlib"];
     runtime_requirements={
-        "python":["python3","sdl2"],
-        "sumbasic":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify"],
-        "sumx":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify"],
-        "sumr":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify"],
+        "python":["python3","sdl2","rich"] + science,
+        "sumbasic":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify"] + science,
+        "sumx":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify"] + science,
+        "sumr":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify"] + science,
+        "bash":["python3","sdl2","rich","pygments","markdown-it-py","mdurl"] + science,
     };
+    runtime_value="sum-full" if language == "python" and profile == "sum-full" else ("sumide" if language == "python" and profile == "sumide" else language);
     data={
         "sum_project":PROJECT_FORMAT,
         "name":str(name or source.stem),
@@ -175,8 +182,8 @@ def project_from_main(path,name=None,target="host",backend=None,storage="auto"):
         },
         "build":{
             "targets":[target],"console":True,
-            "host":{"backend":backend or "auto"},
-            "android":{"backend":backend or "auto","requirements":runtime_requirements[language],"storage_access":storage,"runtime":language,"bundle":"sum-runtime"},
+            "host":{"backend":backend or "auto","bundle":"sum-full"},
+            "android":{"backend":backend or "auto","requirements":runtime_requirements[language],"storage_access":storage,"runtime":runtime_value,"bundle":"sum-full"},
         },
     };
     return SumProject(source.parent,data);

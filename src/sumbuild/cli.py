@@ -38,8 +38,8 @@ def _parser():
     parser.add_argument("--doctor-json",action="store_true",dest="doctor_json",help="check build dependencies as JSON");
     # Single-source shortcut.  This deliberately lives at top level so the
     # common case is exactly: sumbuild --main main.bas --target android --backend p4a
-    parser.add_argument("--main",dest="main_file",help="build one source file without a project.sum (.py/.bas/.r/.prg)");
-    parser.add_argument("--target",dest="shortcut_target",type=str.lower,choices=("host","linux","windows","macos","android"),default="host",help="target for --main shortcut");
+    parser.add_argument("--main",dest="main_file",help="build one source file without a project.sum (.py/.bas/.r/.prg/.sh/.bash/.ksh)");
+    parser.add_argument("--target",dest="shortcut_target",type=str.lower,choices=("host","linux","android"),default="host",help="target for --main shortcut");
     parser.add_argument("--backend",dest="shortcut_backend",default=None,help="backend for --main shortcut");
     parser.add_argument("--prepare",dest="shortcut_prepare",action="store_true",help="prepare only for --main shortcut");
     parser.add_argument("--name",dest="shortcut_name",help="application name for --main shortcut");
@@ -52,7 +52,7 @@ def _parser():
     verify=sub.add_parser("verify",help="verify package checksums"); verify.add_argument("package");
     unpack=sub.add_parser("unpack",help="extract package representation"); unpack.add_argument("package"); unpack.add_argument("-d","--directory",required=True);
     disassemble=sub.add_parser("disassemble",help="reconstruct a SUM project"); disassemble.add_argument("package"); disassemble.add_argument("-d","--directory",required=True);
-    build=sub.add_parser("build",help="build host executable or Android APK"); build.add_argument("project",nargs="?",default="."); build.add_argument("--target",type=str.lower,choices=("host","linux","windows","macos","android"),default="host"); build.add_argument("--backend",default=None,help="backend: host auto/nuitka/pyinstaller; android auto/p4a/buildozer"); build.add_argument("--prepare",action="store_true",help="prepare staging/tool command without invoking external builder"); build.add_argument("--name",dest="build_name",help="override application name for this build"); build.add_argument("--storage",dest="build_storage",type=str.lower,choices=("auto","all-files","scoped","none"),help="override Android storage policy for this build");
+    build=sub.add_parser("build",help="build Linux executable or Android APK"); build.add_argument("project",nargs="?",default="."); build.add_argument("--target",type=str.lower,choices=("host","linux","android"),default="host"); build.add_argument("--backend",default=None,help="backend: Linux auto/nuitka/pyinstaller; Android auto/p4a/buildozer"); build.add_argument("--prepare",action="store_true",help="prepare staging/tool command without invoking external builder"); build.add_argument("--name",dest="build_name",help="override application name for this build"); build.add_argument("--storage",dest="build_storage",type=str.lower,choices=("auto","all-files","scoped","none"),help="override Android storage policy for this build");
     return parser;
 
 
@@ -89,8 +89,8 @@ def main(argv=None):
         if args.main_file:
             project=project_from_main(args.main_file,name=args.shortcut_name,target=args.shortcut_target,backend=args.shortcut_backend,storage=args.shortcut_storage);
             target=args.shortcut_target;
-            if target in ("host","linux","windows","macos"):
-                if target != "host" and not sys.platform.startswith({"linux":"linux","windows":"win","macos":"darwin"}[target]): raise BuildError("explicit cross-platform host compilation is not implemented yet; use target=host on the target OS")
+            if target in ("host","linux"):
+                if not sys.platform.startswith("linux"): raise BuildError("Linux and Android are the active targets in this milestone")
                 result=build_host(project,args.shortcut_prepare,args.shortcut_backend);
             else:
                 result=build_android(project,args.shortcut_prepare,args.shortcut_backend);
@@ -114,8 +114,8 @@ def main(argv=None):
         if args.command == "disassemble": print(disassemble_package(args.package,args.directory)); return 0;
         if args.command == "build":
             project=_project_with_build_overrides(args.project,args.build_name,args.build_storage);
-            if args.target in ("host","linux","windows","macos"):
-                if args.target != "host" and not sys.platform.startswith({"linux":"linux","windows":"win","macos":"darwin"}[args.target]): raise BuildError("explicit cross-platform host compilation is not implemented yet; use target=host on the target OS")
+            if args.target in ("host","linux"):
+                if not sys.platform.startswith("linux"): raise BuildError("Linux and Android are the active targets in this milestone")
                 result=build_host(project,args.prepare,args.backend)
             else: result=build_android(project,args.prepare,args.backend);
             print(json.dumps(result,indent=2)); return 0;

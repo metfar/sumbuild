@@ -280,3 +280,105 @@ def test_sumbuild_ships_extended_basic_acceptance_examples():
         assert (root/'examples'/name).exists();
     assert 'INPUT "Your name"; name$' in (root/'examples'/'hello.bas').read_text(encoding='utf-8');
     assert (root/'examples'/'sound.bas').read_text(encoding='utf-8').rstrip().endswith('SYSTEM');
+
+
+def test_a24_active_scope_is_linux_and_android_only():
+    from sumbuild.cli import _parser;
+    parser=_parser();
+    assert parser.parse_args(["--main","x.py","--target","linux"]).shortcut_target == "linux";
+    assert parser.parse_args(["--main","x.py","--target","android"]).shortcut_target == "android";
+    try:
+        parser.parse_args(["--main","x.py","--target","windows"]);
+    except SystemExit:
+        pass;
+    else:
+        raise AssertionError("windows should be paused in a24");
+
+
+def test_a24_science_stack_is_in_full_runtime_requirements(tmp_path):
+    from sumbuild.project import project_from_main;
+    from sumbuild.backends import SUM_ANDROID_CORE_REQUIREMENTS, SUM_DATA_SCIENCE_REQUIREMENTS;
+    main=tmp_path/"main.py"; main.write_text("print(1)\n",encoding="utf-8");
+    project=project_from_main(main,target="android");
+    requirements=project.build["android"]["requirements"];
+    for package in ("numpy","pandas","matplotlib"):
+        assert package in SUM_DATA_SCIENCE_REQUIREMENTS;
+        assert package in SUM_ANDROID_CORE_REQUIREMENTS;
+        assert package in requirements;
+    assert "seaborn" not in requirements;
+
+
+def test_a24_sum_python_source_gets_full_sum_runtime(tmp_path):
+    from sumbuild.project import project_from_main;
+    main=tmp_path/"main.py"; main.write_text("from sumgui import easy\n",encoding="utf-8");
+    project=project_from_main(main,target="android");
+    assert project.build["android"]["runtime"] == "sum-full";
+    assert project.build["android"]["storage_access"] == "all-files";
+
+
+def test_a24_sumbash_shell_inference_is_linux_only(tmp_path):
+    from sumbuild.project import infer_main_language, project_from_main, ProjectError;
+    for name in ("hello.sh","hello.bash","hello.ksh"):
+        path=tmp_path/name; path.write_text("echo hi\n",encoding="utf-8");
+        assert infer_main_language(path) == "bash";
+        project=project_from_main(path,target="linux");
+        assert project.language == "bash";
+        assert project.build["host"]["bundle"] == "sum-full";
+    try:
+        project_from_main(tmp_path/"hello.sh",target="android");
+    except ProjectError as exc:
+        assert "sumbash" in str(exc).lower();
+    else:
+        raise AssertionError("Android Bash should remain paused");
+
+
+def test_a24_android_audio_is_lazy_at_application_start():
+    root=Path(__file__).resolve().parents[1];
+    source=(root/'src'/'sumbuild'/'android_runtime'/'sumgui_application_backend.py').read_text(encoding='utf-8');
+    assert 'self.audio_available=None' in source;
+    assert 'self.audio_available=bool(audio_service().available)' not in source;
+    assert 'audio_service().tone' in source;
+
+
+def test_a24_examples_include_science_and_bash_smokes():
+    root=Path(__file__).resolve().parents[1];
+    science=(root/'examples'/'science_stack.py').read_text(encoding='utf-8');
+    shell=(root/'examples'/'hello.sh').read_text(encoding='utf-8');
+    for token in ('import numpy','import pandas','import matplotlib'):
+        assert token in science;
+    assert 'seaborn' not in science.lower();
+    assert 'bash' in shell;
+
+
+def test_a25_python_baseline_requirements_include_rich_and_science(tmp_path):
+    from sumbuild.project import project_from_main;
+    from sumbuild.backends import SUM_PYTHON_BASE_REQUIREMENTS;
+    main=tmp_path/"main.py"; main.write_text("print(1)\n",encoding="utf-8");
+    project=project_from_main(main,target="android");
+    requirements=project.build["android"]["requirements"];
+    for package in ("rich","numpy","pandas","matplotlib"):
+        assert package in SUM_PYTHON_BASE_REQUIREMENTS;
+        assert package in requirements;
+
+
+def test_a25_science_example_uses_user_baseline_imports():
+    root=Path(__file__).resolve().parents[1];
+    source=(root/"examples"/"science_stack.py").read_text(encoding="utf-8");
+    for line in (
+        "import builtins as b;",
+        "import numpy as np;",
+        "import pandas as pd;",
+        "from rich import print;",
+        "import datetime as dt;",
+        "import warnings;",
+        "import sys;",
+    ):
+        assert line in source;
+
+
+def test_a25_user_import_inventory_is_preserved():
+    root=Path(__file__).resolve().parents[1];
+    inventory=(root/"examples"/"imps3.txt").read_text(encoding="utf-8").splitlines();
+    for name in ("numpy","pandas","matplotlib","requests","scipy","sympy","yaml"):
+        assert name in inventory;
+    assert "seaborn" not in inventory;

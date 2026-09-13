@@ -1,5 +1,7 @@
 # sumBuild
 
+See `README-a24.md` for the Linux/Android target scope and the full NumPy/pandas/Matplotlib runtime policy.
+
 See `README-a23.md` for Android sumBASIC modal INPUT and END/SYSTEM semantics.
 
 See `README-a22.md` for the full-runtime Android policy and bundled BASIC smoke examples. 0.1.0a2
@@ -21,7 +23,7 @@ Implemented:
 
 The build layer never installs toolchains automatically. Missing optional builders are diagnostics, not project corruption.
 
-Current executable backends build Python entrypoints. sumBASIC, sumX and sumR runtime adapters remain intentionally above the same project/container contract.
+Active executable targets in 0.1.0a25 are Linux and Android. Linux now stages SUM runtime adapters for Python, sumBASIC, sumX, sumR and the existing sumIDE `sumbash` shell profile; Android keeps the SUM language adapters already under test. Windows/macOS and JS/PHP/Ruby/HTML adapters are paused. Full SUM runtime bundles explicitly carry Rich, NumPy, pandas and Matplotlib; Seaborn is deferred. The user import inventory is preserved as examples/imps3.txt for staged dependency expansion.
 
 <p align=center><b>- oOo -</b></p>
 
