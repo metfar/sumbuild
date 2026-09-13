@@ -53,7 +53,7 @@ SUM_ANDROID_PYTHON_VERSION="3.13.13";
 SUM_ANDROID_NUMPY_VERSION="2.2.3";
 SUM_ANDROID_PANDAS_VERSION="2.2.3";
 SUM_ANDROID_MATPLOTLIB_VERSION="3.10.1";
-SUM_P4A_PROFILE_REVISION="a28-android-science-tagfix-shell-1";
+SUM_P4A_PROFILE_REVISION="a29-android-pandas-build-numpy-pin-1";
 
 SUM_ANDROID_CORE_REQUIREMENTS=(
     "python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify",
@@ -801,6 +801,186 @@ in numpy/_core/src/multiarray/unique.cpp during prebuild_arch().
     return root.resolve();
 
 
+
+def _write_pandas_android_recipe(directory):
+    """Stage a p4a pandas recipe whose build NumPy matches target NumPy.
+
+    pandas 2.2.3 declares ``numpy>=2.0`` in pyproject.toml.  An isolated
+    PEP-517 build therefore installs the newest host NumPy while p4a compiles
+    the extension against the target NumPy 2.2.3 headers.  The generated
+    C/Cython source then references helpers from a different NumPy C-API.
+    Keep both sides on the same version.
+    """;
+    root=Path(directory).parent / "p4a-local-recipes";
+    recipe_dir=root / "pandas"; recipe_dir.mkdir(parents=True,exist_ok=True);
+    recipe_text='''#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#pylint:disable=W0301
+#  
+#  Copyright 2018- William Martinez Bas <metfar@gmail.com>
+#  
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation; either version 2 of the License, or
+#  (at your option) any later version.
+#  
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#  
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+#  MA 02110-1301, USA.
+#  
+from os.path import join
+from pythonforandroid.recipe import MesonRecipe
+
+
+class PandasRecipe(MesonRecipe):
+    version = "v2.2.3"
+    url = "git+https://github.com/pandas-dev/pandas"
+    depends = ["numpy", "libbz2", "liblzma"]
+    hostpython_prerequisites = [
+        "versioneer[toml]",
+        "numpy==2.2.3",
+        "Cython<4.0.0a0",
+    ]
+    patches = ["fix_numpy_includes.patch"]
+    python_depends = ["python-dateutil", "pytz"]
+    need_stl_shared = True
+
+    def prebuild_arch(self, arch):
+        super().prebuild_arch(arch)
+        source = join(self.get_build_dir(arch.arch), "pyproject.toml")
+        with open(source, "r", encoding="utf-8") as stream:
+            text = stream.read()
+        old = '"numpy>=2.0"'
+        new = '"numpy==2.2.3"'
+        if old in text:
+            text = text.replace(old, new, 1)
+            with open(source, "w", encoding="utf-8") as stream:
+                stream.write(text)
+        elif new not in text:
+            raise RuntimeError(
+                "pandas pyproject.toml layout changed: NumPy build requirement not found"
+            )
+
+    def get_recipe_env(self, arch, **kwargs):
+        env = super().get_recipe_env(arch, **kwargs)
+        env["NUMPY_INCLUDES"] = join(
+            self.ctx.get_python_install_dir(arch.arch), "numpy/_core/include"
+        )
+        env["PYTHON_INCLUDE_DIR"] = self.ctx.python_recipe.include_root(arch)
+        env["LDFLAGS"] += f" -landroid -l{self.stl_lib_name}"
+        return env
+
+    def build_arch(self, arch):
+        super().build_arch(arch)
+        self.restore_hostpython_prerequisites(["cython"])
+
+
+recipe = PandasRecipe()
+'''
+    patch_text="""diff '--color=auto' -uNr pandas/pandas/_libs/meson.build pandas.mod/pandas/_libs/meson.build
+--- pandas/pandas/_libs/meson.build
++++ pandas.mod/pandas/_libs/meson.build
+@@ -115,7 +115,7 @@
+         ext_name,
+         ext_dict.get('sources'),
+         cython_args: cython_args,
+-        include_directories: [inc_np, inc_pd],
++        include_directories: [inc_android, inc_np, inc_pd],
+         dependencies: ext_dict.get('deps', ''),
+         subdir: 'pandas/_libs',
+         install: true
+diff '--color=auto' -uNr pandas/pandas/_libs/tslibs/meson.build pandas.mod/pandas/_libs/tslibs/meson.build
+--- pandas/pandas/_libs/tslibs/meson.build
++++ pandas.mod/pandas/_libs/tslibs/meson.build
+@@ -33,7 +33,7 @@
+         ext_name,
+         ext_dict.get('sources'),
+         cython_args: cython_args,
+-        include_directories: [inc_np, inc_pd],
++        include_directories: [inc_android, inc_np, inc_pd],
+         dependencies: ext_dict.get('deps', ''),
+         subdir: 'pandas/_libs/tslibs',
+         install: true
+diff '--color=auto' -uNr pandas/pandas/_libs/window/meson.build pandas.mod/pandas/_libs/window/meson.build
+--- pandas/pandas/_libs/window/meson.build
++++ pandas.mod/pandas/_libs/window/meson.build
+@@ -2,7 +2,7 @@
+     'aggregations',
+     ['aggregations.pyx'],
+     cython_args: ['-X always_allow_keywords=true'],
+-    include_directories: [inc_np, inc_pd],
++    include_directories: [inc_android, inc_np, inc_pd],
+     subdir: 'pandas/_libs/window',
+     override_options : ['cython_language=cpp'],
+     install: true
+@@ -12,7 +12,7 @@
+     'indexers',
+     ['indexers.pyx'],
+     cython_args: ['-X always_allow_keywords=true'],
+-    include_directories: [inc_np, inc_pd],
++    include_directories: [inc_android, inc_np, inc_pd],
+     subdir: 'pandas/_libs/window',
+     install: true
+ )
+diff '--color=auto' -uNr pandas/pandas/meson.build pandas.mod/pandas/meson.build
+--- pandas/pandas/meson.build
++++ pandas.mod/pandas/meson.build
+@@ -3,20 +3,23 @@
+     '-c',
+     '''
+ import os
+-import numpy as np
+-try:
+-    # Check if include directory is inside the pandas dir
+-    # e.g. a venv created inside the pandas dir
+-    # If so, convert it to a relative path
+-    incdir = os.path.relpath(np.get_include())
+-except Exception:
+-    incdir = np.get_include()
+-print(incdir)
+-    '''
++print(os.environ["NUMPY_INCLUDES"])
++    '''
++  ],
++  check: true
++).stdout().strip()
++incdir_android = run_command(py,
++  [
++    '-c',
++    '''
++import os
++print(os.environ["PYTHON_INCLUDE_DIR"])
++    '''
+   ],
+   check: true
+ ).stdout().strip()
+ 
++inc_android = include_directories(incdir_android)
+ inc_np = include_directories(incdir_numpy)
+ inc_pd = include_directories('_libs/include')
+"""
+    (recipe_dir / "__init__.py").write_text(recipe_text,encoding="utf-8");
+    (recipe_dir / "fix_numpy_includes.patch").write_text(patch_text,encoding="utf-8");
+    (recipe_dir / "SUM-PANDAS-PIN.txt").write_text(
+        "pandas 2.2.3 build isolation is pinned to NumPy 2.2.3 to match the Android target headers.\n",
+        encoding="utf-8",
+    );
+    return root.resolve();
+
+
+def _write_android_local_recipes(directory,requirements):
+    root=Path(directory).parent / "p4a-local-recipes";
+    if root.exists(): shutil.rmtree(str(root));
+    names={_android_requirement_name(item) for item in requirements};
+    if "pandas" in names: return _write_pandas_android_recipe(directory);
+    return None;
+
 def _p4a_storage_from_command(command):
     for item in command:
         if str(item).startswith("--storage-dir="): return Path(str(item).split("=",1)[1]).resolve();
@@ -877,7 +1057,9 @@ def prepare_android(project, directory=None, backend=None, details=False):
     (directory / "sum-android.json").write_text(__import__("json").dumps(runtime,indent=2,ensure_ascii=False)+"\n",encoding="utf-8");
     if selected == "p4a":
         storage=_p4a_profile_storage(project,requirements,arch);
+        local_recipes=_write_android_local_recipes(directory,requirements);
         command=["p4a","apk","--private",str(directory),"--package={}".format(package),"--name={}".format(project.name),"--version={}".format(project.version),"--bootstrap=sdl2","--requirements={}".format(",".join(requirements)),"--arch={}".format(arch),"--storage-dir={}".format(storage)];
+        if local_recipes is not None: command.append("--local-recipes={}".format(local_recipes));
         if mode == "debug": command.append("--debug");
         if icon is not None: command.append("--icon={}".format(icon));
         for permission in permissions: command.append("--permission={}".format(permission));

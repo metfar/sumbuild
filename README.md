@@ -1,3 +1,5 @@
+> Latest Android compatibility notes: see `README-a29.md`.
+
 See `README-a28.md` for the Android scientific tag fix and Android shell-profile support.
 
 # sumBuild

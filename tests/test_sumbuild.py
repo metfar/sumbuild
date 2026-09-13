@@ -481,7 +481,10 @@ def test_a28_android_science_matrix_is_tag_safe(tmp_path):
     assert "pandas==2.2.3" not in requirements;
     assert "matplotlib==3.10.1" not in requirements;
     assert "numpy" in requirements and "pandas" in requirements and "matplotlib" in requirements;
-    assert not any(item.startswith("--local-recipes=") for item in command);
+    local=next(item.split("=",1)[1] for item in command if item.startswith("--local-recipes="));
+    recipe=Path(local)/"pandas"/"__init__.py";
+    assert recipe.exists();
+    assert 'numpy==2.2.3' in recipe.read_text(encoding="utf-8");
 
 
 def test_a28_full_runtime_core_requirements_keep_git_recipes_unversioned():
@@ -498,7 +501,7 @@ def test_a28_full_runtime_core_requirements_keep_git_recipes_unversioned():
 
 def test_a28_profile_revision_and_recipe_tag_overrides():
     from sumbuild.backends import SUM_P4A_PROFILE_REVISION;
-    assert SUM_P4A_PROFILE_REVISION.startswith("a28-");
+    assert SUM_P4A_PROFILE_REVISION.startswith("a29-");
     import sumbuild.backends as backends;
     overrides=backends._android_recipe_version_overrides();
     assert overrides["VERSION_numpy"] == "v2.2.3";
@@ -518,3 +521,20 @@ def test_a28_android_sumbash_patches_system_sh(tmp_path):
     assert 'runner=("/system/bin/sh", "{source}")' in profiles;
     assert '".ksh"' in profiles;
     assert 'executable=("/system/bin/sh" if os.environ.get("SUM_ANDROID") == "1" else None)' in app;
+
+
+def test_a29_pandas_local_recipe_pins_isolated_build_numpy(tmp_path):
+    import json;
+    import sumbuild.backends as backends;
+    main=tmp_path/"main.py"; main.write_text("import pandas\n",encoding="utf-8");
+    manifest=tmp_path/"project.sum";
+    manifest.write_text(json.dumps({"sum_project":1,"name":"pandas-demo","entrypoint":"main.py","sources":["main.py"],"build":{"android":{"backend":"p4a","requirements":["python3","sdl2","numpy","pandas","matplotlib"]}}}),encoding="utf-8");
+    _,command=backends.prepare_android(manifest,backend="p4a");
+    local=Path(next(item.split("=",1)[1] for item in command if item.startswith("--local-recipes=")));
+    recipe=(local/"pandas"/"__init__.py").read_text(encoding="utf-8");
+    patch=(local/"pandas"/"fix_numpy_includes.patch").read_text(encoding="utf-8");
+    assert 'version = "v2.2.3"' in recipe;
+    assert '"numpy==2.2.3"' in recipe;
+    assert 'old = \'"numpy>=2.0"\'' in recipe;
+    assert 'new = \'"numpy==2.2.3"\'' in recipe;
+    assert "inc_android" in patch;
