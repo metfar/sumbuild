@@ -183,3 +183,23 @@ def test_android_sumcore_audio_is_routed_to_sdl2():
     assert "def _patch_android_sumcore_audio" in source;
     assert 'SUM_AUDIO_BACKEND' in source;
     assert 'from sumgui.sdl2_services import play_tone' in source;
+
+
+def test_build_parser_accepts_name_and_storage():
+    from sumbuild.cli import _parser;
+    args=_parser().parse_args(["build","project.sum","--target","Android","--backend","p4a","--name","sumide","--storage","auto"]);
+    assert args.command == "build";
+    assert args.target == "android";
+    assert args.build_name == "sumide";
+    assert args.build_storage == "auto";
+
+
+def test_project_build_overrides(tmp_path):
+    import json;
+    from sumbuild.cli import _project_with_build_overrides;
+    main=tmp_path/"main.py"; main.write_text("print('x')\n",encoding="utf-8");
+    manifest=tmp_path/"project.sum";
+    manifest.write_text(json.dumps({"sum_project":1,"name":"old","entrypoint":"main.py","sources":["main.py"],"build":{"android":{"runtime":"sumide","storage_access":"scoped"}}}),encoding="utf-8");
+    project=_project_with_build_overrides(manifest,"sumide","auto");
+    assert project.name == "sumide";
+    assert project.build["android"]["storage_access"] == "all-files";

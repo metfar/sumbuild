@@ -543,6 +543,21 @@ def _find_android_apk(directory, selected):
     return sorted(candidates,key=lambda item:item.stat().st_mtime,reverse=True)[0] if candidates else None;
 
 
+
+def _repair_p4a_transient_venv(env):
+    """Remove only p4a's disposable build venv when its pip installation is broken.""";
+    base=Path.home() / ".local" / "share" / "python-for-android" / "build" / "venv";
+    python=base / "bin" / "python";
+    if not python.exists(): return {"checked":False,"repaired":False,"path":str(base)};
+    try:
+        probe=subprocess.run([str(python),"-m","pip","--version"],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=20,env=env,check=False);
+    except (OSError,subprocess.SubprocessError):
+        probe=None;
+    if probe is not None and probe.returncode == 0:
+        return {"checked":True,"repaired":False,"path":str(base)};
+    shutil.rmtree(str(base),ignore_errors=True);
+    return {"checked":True,"repaired":True,"path":str(base)};
+
 def build_android(project, prepare_only=False, backend=None):
     project=project if isinstance(project, SumProject) else SumProject.load(project);
     directory,command,selected,stage=prepare_android(project,backend=backend,details=True);
@@ -550,6 +565,10 @@ def build_android(project, prepare_only=False, backend=None):
     if prepare_only: return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"transpile":stage,"command":command,"artifact":None};
     executable=command[0];
     if not shutil.which(executable): raise BuildError("{} not found; run sumbuild --doctor or use --prepare".format(executable));
+    p4a_venv=None;
+    if selected == "p4a":
+        p4a_venv=_repair_p4a_transient_venv(env);
+        if p4a_venv.get("repaired"): print("[WARN] repaired broken python-for-android transient pip environment: {}".format(p4a_venv["path"]),file=sys.stderr);
     try: subprocess.run(command,cwd=str(directory),check=True,env=env);
     except subprocess.CalledProcessError as exc:
         raise BuildError("{} build failed with exit status {}".format(selected,exc.returncode)) from exc;
@@ -558,4 +577,4 @@ def build_android(project, prepare_only=False, backend=None):
     dist=project.root / "dist"; dist.mkdir(parents=True,exist_ok=True);
     target=dist / "{}-{}-{}.apk".format(project.name,project.version,"debug" if str(_android_settings(project).get("mode","debug")) == "debug" else "release");
     shutil.copy2(str(apk),str(target));
-    return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"transpile":stage,"command":command,"artifact":str(target)};
+    return {"staging":str(directory),"backend":selected,"toolchain":toolchain,"p4a_venv":p4a_venv,"transpile":stage,"command":command,"artifact":str(target)};

@@ -52,9 +52,28 @@ def _parser():
     verify=sub.add_parser("verify",help="verify package checksums"); verify.add_argument("package");
     unpack=sub.add_parser("unpack",help="extract package representation"); unpack.add_argument("package"); unpack.add_argument("-d","--directory",required=True);
     disassemble=sub.add_parser("disassemble",help="reconstruct a SUM project"); disassemble.add_argument("package"); disassemble.add_argument("-d","--directory",required=True);
-    build=sub.add_parser("build",help="build host executable or Android APK"); build.add_argument("project",nargs="?",default="."); build.add_argument("--target",type=str.lower,choices=("host","linux","windows","macos","android"),default="host"); build.add_argument("--backend",default=None,help="backend: host auto/nuitka/pyinstaller; android auto/p4a/buildozer"); build.add_argument("--prepare",action="store_true",help="prepare staging/tool command without invoking external builder");
+    build=sub.add_parser("build",help="build host executable or Android APK"); build.add_argument("project",nargs="?",default="."); build.add_argument("--target",type=str.lower,choices=("host","linux","windows","macos","android"),default="host"); build.add_argument("--backend",default=None,help="backend: host auto/nuitka/pyinstaller; android auto/p4a/buildozer"); build.add_argument("--prepare",action="store_true",help="prepare staging/tool command without invoking external builder"); build.add_argument("--name",dest="build_name",help="override application name for this build"); build.add_argument("--storage",dest="build_storage",type=str.lower,choices=("auto","all-files","scoped","none"),help="override Android storage policy for this build");
     return parser;
 
+
+
+def _project_with_build_overrides(project, name=None, storage=None):
+    project=project if isinstance(project, SumProject) else SumProject.load(project);
+    if name is None and storage is None: return project;
+    data=project.as_dict();
+    if name is not None:
+        text=str(name).strip();
+        if not text: raise BuildError("--name must not be empty");
+        data["name"]=text;
+    if storage is not None:
+        value=str(storage).strip().lower();
+        if value not in ("auto","all-files","scoped","none"): raise BuildError("--storage expects auto, all-files, scoped, or none");
+        build=dict(data.get("build",{})); android=dict(build.get("android",{}));
+        if value == "auto":
+            runtime=str(android.get("runtime","") or data.get("language","")).strip().lower();
+            value="all-files" if runtime in ("sumide","sum-runtime","sum-full","sumbasic","sumx","sumr") else "scoped";
+        android["storage_access"]=value; build["android"]=android; data["build"]=build;
+    return SumProject(project.root,data);
 
 def _doctor(as_json=False):
     data=report();
@@ -94,10 +113,11 @@ def main(argv=None):
         if args.command == "unpack": print(unpack_package(args.package,args.directory)); return 0;
         if args.command == "disassemble": print(disassemble_package(args.package,args.directory)); return 0;
         if args.command == "build":
+            project=_project_with_build_overrides(args.project,args.build_name,args.build_storage);
             if args.target in ("host","linux","windows","macos"):
                 if args.target != "host" and not sys.platform.startswith({"linux":"linux","windows":"win","macos":"darwin"}[args.target]): raise BuildError("explicit cross-platform host compilation is not implemented yet; use target=host on the target OS")
-                result=build_host(args.project,args.prepare,args.backend)
-            else: result=build_android(args.project,args.prepare,args.backend);
+                result=build_host(project,args.prepare,args.backend)
+            else: result=build_android(project,args.prepare,args.backend);
             print(json.dumps(result,indent=2)); return 0;
     except (ProjectError,BuildError,OSError,ValueError) as exc:
         print("sumbuild: {}".format(exc),file=sys.stderr); return 2;
