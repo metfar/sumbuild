@@ -117,7 +117,7 @@ class SumProject:
     @classmethod
     def create(cls, root, name, entrypoint="main.py", language="python"):
         root=Path(root).resolve(); root.mkdir(parents=True, exist_ok=True);
-        data={"sum_project":PROJECT_FORMAT,"name":name,"version":"0.1.0","language":language,"entrypoint":entrypoint,"sources":[entrypoint],"resources":[],"dependencies":[],"interface":{"screen":"auto","orientation":"auto","font_size":"auto","font_auto":{"ideal_columns":72,"min_columns":40,"portrait_columns":72,"landscape_columns":80,"min_rows_keyboard":15,"min_px":18,"max_px":64},"keyboard":{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto","repeat":{"enabled":True,"delay_ms":400,"interval_ms":55}},"shortcuts":{"exit":"F10","fullscreen":"ALT+ENTER"}},"build":{"targets":["linux","android"],"console":True,"host":{"backend":"auto","bundle":"auto"},"android":{"backend":"auto","requirements":["python3","sdl2","rich","numpy","pandas","matplotlib"],"bundle":"auto"}}};
+        data={"sum_project":PROJECT_FORMAT,"name":name,"version":"0.1.0","language":language,"entrypoint":entrypoint,"sources":[entrypoint],"resources":[],"dependencies":[],"interface":{"screen":"auto","orientation":"auto","font_size":"auto","font_auto":{"ideal_columns":72,"min_columns":40,"portrait_columns":72,"landscape_columns":80,"min_rows_keyboard":15,"min_px":18,"max_px":64},"keyboard":{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto","repeat":{"enabled":True,"delay_ms":400,"interval_ms":55}},"shortcuts":{"exit":"F10","fullscreen":"ALT+ENTER"}},"build":{"targets":["linux","android"],"console":True,"host":{"backend":"auto","bundle":"auto"},"android":{"backend":"p4a","requirements":["python3","sdl2","rich","numpy","pandas","matplotlib"],"bundle":"auto"}}};
         project=cls(root, data);
         (root / PROJECT_FILENAME).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8");
         return project;
@@ -181,7 +181,7 @@ def project_from_main(path,name=None,target="host",backend=None,storage="auto"):
         "build":{
             "targets":[target],"console":True,
             "host":{"backend":backend or "auto","bundle":"sum-full"},
-            "android":{"backend":backend or "auto","requirements":runtime_requirements[language],"storage_access":storage,"runtime":runtime_value,"bundle":"sum-full"},
+            "android":{"backend":backend or ("p4a" if target == "android" else "auto"),"requirements":runtime_requirements[language],"storage_access":storage,"runtime":runtime_value,"bundle":"sum-full","standalone":True},
         },
     };
     return SumProject(source.parent,data);

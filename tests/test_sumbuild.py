@@ -644,7 +644,9 @@ def test_a32_sumide_patch_maximizes_output_and_uses_private_temp(tmp_path):
     text=app.read_text(encoding="utf-8");
     assert "_sum_android_private_dir" in text;
     assert "self.output_window.maximize()" in text;
-    assert "Pulse Enter para finalizar" in text;
+    assert 'Button("Reiniciar"' in text;
+    assert 'Button("Salir"' in text;
+    assert 'title="Terminado"' in text;
 
 
 def test_a32_sumedit_android_starts_clean_and_logs_crashes():
@@ -653,3 +655,63 @@ def test_a32_sumedit_android_starts_clean_and_logs_crashes():
     assert "EditApp(None)" in source;
     assert "sumedit-crash.log" in source;
     assert "EditApp(sample" not in source;
+
+
+def test_a33_android_backend_defaults_to_p4a(tmp_path):
+    import json;
+    from sumbuild.backends import select_android_backend;
+    from sumbuild.project import SumProject, project_from_main;
+    root=tmp_path/"demo"; project=SumProject.create(root,"demo");
+    (root/"main.py").write_text("print(1)\n",encoding="utf-8");
+    assert project.build["android"]["backend"] == "p4a";
+    assert select_android_backend(project,None) == "p4a";
+    assert select_android_backend(project,"auto") == "p4a";
+    main=tmp_path/"hello.bas"; main.write_text("10 END\n",encoding="utf-8");
+    shortcut=project_from_main(main,target="android");
+    assert shortcut.build["android"]["backend"] == "p4a";
+    assert shortcut.build["android"]["standalone"] is True;
+
+
+def test_a33_cli_project_build_aliases():
+    from sumbuild.cli import _parser;
+    parser=_parser();
+    one=parser.parse_args(["--build","project.sum","--target","Android"]);
+    two=parser.parse_args(["--project","project.sum","--target","Android"]);
+    three=parser.parse_args(["build","project.sum","--target","Android"]);
+    assert one.build_alias_project == "project.sum" and one.shortcut_target == "android";
+    assert two.project_alias_project == "project.sum" and two.shortcut_target == "android";
+    assert three.command == "build" and three.project == "project.sum" and three.target == "android";
+    assert one.shortcut_backend is None;
+
+
+def test_a33_standalone_basic_completion_dialog_contract():
+    root=Path(__file__).resolve().parents[1];
+    source=(root/"src"/"sumbuild"/"android_runtime"/"sumbasic_ide.py").read_text(encoding="utf-8");
+    assert 'SUM_STANDALONE_RUN' in source;
+    assert 'Button("Reiniciar"' in source;
+    assert 'Button("Salir"' in source;
+    assert 'title="Terminado"' in source;
+    assert 'return self.run_program()' in source;
+    assert 'system_exit_requested' in source;
+
+
+def test_a33_standalone_scriptide_patch_has_restart_exit(tmp_path):
+    import sumbuild.backends as backends;
+    vendor=tmp_path/"vendor"; package=vendor/"sumide"; package.mkdir(parents=True);
+    app=package/"app.py";
+    app.write_text('''import os\nfrom sumtui.widgets import Button, Dialog, HBox, Label, VBox\nclass X:\n    def f(self):\n            self._cleanup_process();\n            dirty = True;\n''',encoding="utf-8");
+    assert backends._patch_android_sumide_runtime(vendor) is True;
+    patched=app.read_text(encoding="utf-8");
+    assert 'Button("Reiniciar"' in patched;
+    assert 'Button("Salir"' in patched;
+    assert 'title="Terminado"' in patched;
+    assert 'return self.run_program()' in patched;
+
+
+def test_a33_language_wrapper_marks_single_source_standalone():
+    root=Path(__file__).resolve().parents[1];
+    source=(root/"src"/"sumbuild"/"backends.py").read_text(encoding="utf-8");
+    assert 'settings.get("standalone",False)' in source;
+    assert 'SUM_STANDALONE_RUN' in source;
+    assert 'setdefault(\\"SUM_STANDALONE_RUN\\",\\"1\\")' in source;
+    assert '_patch_android_sumx_runtime(vendor)' in source;

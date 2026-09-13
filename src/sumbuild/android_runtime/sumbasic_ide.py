@@ -26,6 +26,7 @@ The editor/workspace/preferences implementation lives in :mod:`sumide`.  This
 module deliberately keeps only BASIC-specific execution services so old
 ``SumBasicIDE`` imports continue to work without reviving a second IDE.
 """;
+import os;
 import queue;
 import re;
 import threading;
@@ -641,5 +642,18 @@ class SumBasicIDE(ScriptIDE):
             self._run_thread = None;
             with self._run_lock:
                 self._run_finished = False;
+            if error is None and not self.basic_interpreter.stopped_by_statement and not self.basic_interpreter.stopped_by_request and os.environ.get("SUM_STANDALONE_RUN", "").strip() == "1" and not self.app.modal_depth:
+                self.output_window.maximize(); self.workspace.show(self.output_window); self.workspace.activate(self.output_window);
+                def _standalone_restart(*_args):
+                    self.app.pop_modal();
+                    self.output_view.set_text(""); self.app.invalidate();
+                    return self.run_program();
+                def _standalone_exit(*_args):
+                    self.app.pop_modal(); self.app.stop(); return True;
+                restart=Button("Reiniciar",on_press=_standalone_restart,default=True);
+                leave=Button("Salir",on_press=_standalone_exit);
+                body=VBox(Label("Terminado"),HBox(restart,leave,sizes=[None,None]),sizes=[1,None]);
+                self.app.push_modal(Dialog(body,title="Terminado",width=52,height=7,on_cancel=_standalone_exit));
+                self.app.focus.set(restart);
             return True;
         return input_dirty or dirty or graphics_dirty;

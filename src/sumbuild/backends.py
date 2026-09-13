@@ -330,12 +330,12 @@ def _android_settings(project):
 
 def select_android_backend(project, requested="auto"):
     settings=_android_settings(project);
-    requested=str(requested or settings.get("backend","auto")).strip().lower();
+    requested=str(requested or settings.get("backend","p4a")).strip().lower();
     if requested not in ("auto","p4a","buildozer"): raise BuildError("android backend expects auto, p4a, or buildozer");
-    if requested != "auto": return requested;
-    if shutil.which("p4a"): return "p4a";
-    if shutil.which("buildozer"): return "buildozer";
-    return "p4a";
+    # p4a is SUM's canonical Android backend. "auto" resolves to p4a too;
+    # buildozer remains available only when it is explicitly requested.
+    if requested in ("auto","p4a"): return "p4a";
+    return "buildozer";
 
 
 
@@ -582,10 +582,39 @@ def _patch_android_sumide_shell(vendor):
 
 
 def _patch_android_sumide_runtime(vendor):
-    """Android-specific IDE behavior: safe temp files, maximized output and standalone pause.""";
+    """Android-specific IDE behavior: safe temp files, maximized output and standalone completion dialog.""";
     app=Path(vendor) / "sumide" / "app.py";
     if not app.exists(): return False;
     text=app.read_text(encoding="utf-8"); changed=False;
+    old_a32=(
+        '            if os.environ.get("SUM_STANDALONE_RUN", "").strip() == "1" and not self.app.modal_depth:\n'
+        '                self._append_output("\\nPulse Enter para finalizar.\\n");\n'
+        '                self.output_window.maximize(); self.workspace.show(self.output_window);\n'
+        '                def _standalone_exit(*_args):\n'
+        '                    self.app.stop(); return True;\n'
+        '                button=Button("Salir", on_press=_standalone_exit, default=True);\n'
+        '                body=VBox(Label("Pulse Enter para finalizar"), button, sizes=[1, None]);\n'
+        '                self.app.push_modal(Dialog(body, title="Programa finalizado", width=52, height=7, on_cancel=_standalone_exit));\n'
+        '                self.app.focus.set(button);\n'
+    );
+    new_a33=(
+        '            if os.environ.get("SUM_STANDALONE_RUN", "").strip() == "1" and not self.app.modal_depth:\n'
+        '                self.output_window.maximize(); self.workspace.show(self.output_window); self.workspace.activate(self.output_window);\n'
+        '                def _standalone_restart(*_args):\n'
+        '                    self.app.pop_modal();\n'
+        '                    self.output_view.set_text(""); self.app.invalidate();\n'
+        '                    return self.run_program();\n'
+        '                def _standalone_exit(*_args):\n'
+        '                    self.app.pop_modal(); self.app.stop(); return True;\n'
+        '                restart=Button("Reiniciar", on_press=_standalone_restart, default=True);\n'
+        '                leave=Button("Salir", on_press=_standalone_exit);\n'
+        '                buttons=HBox(restart,leave,sizes=[None,None]);\n'
+        '                body=VBox(Label("Terminado"),buttons,sizes=[1,None]);\n'
+        '                self.app.push_modal(Dialog(body,title="Terminado",width=52,height=7,on_cancel=_standalone_exit));\n'
+        '                self.app.focus.set(restart);\n'
+    );
+    if old_a32 in text:
+        text=text.replace(old_a32,new_a33,1); changed=True;
     helper=(
         '\n\ndef _sum_android_private_dir():\n'
         '    raw=os.environ.get("SUM_STORAGE_PRIVATE", "").strip();\n'
@@ -625,19 +654,67 @@ def _patch_android_sumide_runtime(vendor):
     new=(
         '            self._cleanup_process();\n'
         '            if os.environ.get("SUM_STANDALONE_RUN", "").strip() == "1" and not self.app.modal_depth:\n'
-        '                self._append_output("\\nPulse Enter para finalizar.\\n");\n'
-        '                self.output_window.maximize(); self.workspace.show(self.output_window);\n'
+        '                self.output_window.maximize(); self.workspace.show(self.output_window); self.workspace.activate(self.output_window);\n'
+        '                def _standalone_restart(*_args):\n'
+        '                    self.app.pop_modal();\n'
+        '                    self.output_view.set_text(""); self.app.invalidate();\n'
+        '                    return self.run_program();\n'
         '                def _standalone_exit(*_args):\n'
-        '                    self.app.stop(); return True;\n'
-        '                button=Button("Salir", on_press=_standalone_exit, default=True);\n'
-        '                body=VBox(Label("Pulse Enter para finalizar"), button, sizes=[1, None]);\n'
-        '                self.app.push_modal(Dialog(body, title="Programa finalizado", width=52, height=7, on_cancel=_standalone_exit));\n'
-        '                self.app.focus.set(button);\n'
+        '                    self.app.pop_modal(); self.app.stop(); return True;\n'
+        '                restart=Button("Reiniciar", on_press=_standalone_restart, default=True);\n'
+        '                leave=Button("Salir", on_press=_standalone_exit);\n'
+        '                buttons=HBox(restart,leave,sizes=[None,None]);\n'
+        '                body=VBox(Label("Terminado"),buttons,sizes=[1,None]);\n'
+        '                self.app.push_modal(Dialog(body,title="Terminado",width=52,height=7,on_cancel=_standalone_exit));\n'
+        '                self.app.focus.set(restart);\n'
         '            dirty = True;'
     );
     if old in text:
         text=text.replace(old,new,1); changed=True;
     app.write_text(text,encoding="utf-8");
+    return changed;
+
+
+def _patch_android_sumx_runtime(vendor):
+    """Give standalone xBase APKs the same Restart/Exit completion contract.""";
+    source=Path(vendor) / "sumx" / "editor_app.py";
+    if not source.exists(): return False;
+    text=source.read_text(encoding="utf-8"); changed=False;
+    if "import os;" not in text:
+        text=text.replace("from pathlib import Path;", "import os;\nfrom pathlib import Path;",1); changed=True;
+    widgets='from sumtui.widgets import Button, Dialog, HBox, Label, VBox;';
+    if widgets not in text:
+        text=text.replace("from sumide.app import ScriptIDE;", "from sumide.app import ScriptIDE;\n"+widgets,1); changed=True;
+    run_old='        self.workspace.show(self.output_window);\n        self.workspace.activate(self.output_window);';
+    run_new='        self.workspace.show(self.output_window);\n        self.output_window.maximize();\n        self.workspace.activate(self.output_window);';
+    if run_old in text:
+        text=text.replace(run_old,run_new,1); changed=True;
+    old=(
+        '        if hasattr(self, "editor"):\n'
+        '            self.app.focus.set(self.editor);\n'
+        '            self._update_status("Run finished");\n'
+        '        return result;'
+    );
+    new=(
+        '        if hasattr(self, "editor"):\n'
+        '            self.app.focus.set(self.editor);\n'
+        '            self._update_status("Run finished");\n'
+        '        if os.environ.get("SUM_STANDALONE_RUN", "").strip() == "1" and not self.app.modal_depth:\n'
+        '            self.output_window.maximize(); self.workspace.show(self.output_window); self.workspace.activate(self.output_window);\n'
+        '            def _standalone_restart(*_args):\n'
+        '                self.app.pop_modal(); self.output_view.set_text(""); self.app.invalidate(); return self.run_program();\n'
+        '            def _standalone_exit(*_args):\n'
+        '                self.app.pop_modal(); self.app.stop(); return True;\n'
+        '            restart=Button("Reiniciar",on_press=_standalone_restart,default=True);\n'
+        '            leave=Button("Salir",on_press=_standalone_exit);\n'
+        '            body=VBox(Label("Terminado"),HBox(restart,leave,sizes=[None,None]),sizes=[1,None]);\n'
+        '            self.app.push_modal(Dialog(body,title="Terminado",width=52,height=7,on_cancel=_standalone_exit));\n'
+        '            self.app.focus.set(restart);\n'
+        '        return result;'
+    );
+    if old in text:
+        text=text.replace(old,new,1); changed=True;
+    source.write_text(text,encoding="utf-8");
     return changed;
 
 
@@ -670,11 +747,13 @@ def _stage_sum_ecosystem(vendor, required=()):
     _patch_android_sumcore_audio(vendor);
     _patch_android_sumide_shell(vendor);
     _patch_android_sumide_runtime(vendor);
+    _patch_android_sumx_runtime(vendor);
     return copied;
 
 
 def _stage_language_runtime(project,directory):
     language=project.language;
+    settings=_android_settings(project);
     if language == "python": return None;
     bundles={
         "sumbasic":(("sumbasic","sumui","sumtui","sumide","sumkeyboard"),"main_basic"),
@@ -710,7 +789,7 @@ def _stage_language_runtime(project,directory):
         'from sumide.app import {func};\n'
         'raise SystemExit({func}(["--gui","--run",str(ROOT / {src!r})]));\n'
     ).format(func=entry_func,src=source);
-    if language == "bash": wrapper=wrapper.replace("from sumide.app import", "os.environ.setdefault(\"SUM_STANDALONE_RUN\",\"1\");\nfrom sumide.app import",1);
+    if bool(settings.get("standalone",False)) or language == "bash": wrapper=wrapper.replace("from sumide.app import", "os.environ.setdefault(\"SUM_STANDALONE_RUN\",\"1\");\nfrom sumide.app import",1);
     (Path(directory) / "main.py").write_text(wrapper,encoding="utf-8");
     return {"runtime":language,"packages":packages,"adapter":"sumide-gui-run","storage_root":"android-private+shared"};
 

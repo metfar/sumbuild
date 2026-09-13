@@ -37,13 +37,16 @@ def _parser():
     parser.add_argument("--doctor",action="store_true",dest="doctor_flag",help="check build dependencies");
     parser.add_argument("--doctor-json",action="store_true",dest="doctor_json",help="check build dependencies as JSON");
     # Single-source shortcut.  This deliberately lives at top level so the
-    # common case is exactly: sumbuild --main main.bas --target android --backend p4a
+    # common Android case is now exactly: sumbuild --main main.bas --target android
     parser.add_argument("--main",dest="main_file",help="build one source file without a project.sum (.py/.bas/.r/.prg/.sh/.bash/.ksh)");
+    project_alias=parser.add_mutually_exclusive_group();
+    project_alias.add_argument("--build",dest="build_alias_project",metavar="PROJECT",help="build PROJECT (alias of: sumbuild build PROJECT)");
+    project_alias.add_argument("--project",dest="project_alias_project",metavar="PROJECT",help="build PROJECT (alias of: sumbuild build PROJECT)");
     parser.add_argument("--target",dest="shortcut_target",type=str.lower,choices=("host","linux","android"),default="host",help="target for --main shortcut");
-    parser.add_argument("--backend",dest="shortcut_backend",default=None,help="backend for --main shortcut");
+    parser.add_argument("--backend",dest="shortcut_backend",default=None,help="backend (Android defaults to p4a; Linux auto-selects)");
     parser.add_argument("--prepare",dest="shortcut_prepare",action="store_true",help="prepare only for --main shortcut");
     parser.add_argument("--name",dest="shortcut_name",help="application name for --main shortcut");
-    parser.add_argument("--storage",dest="shortcut_storage",type=str.lower,choices=("auto","all-files","scoped","none"),default="auto",help="Android storage policy for --main shortcut");
+    parser.add_argument("--storage",dest="shortcut_storage",type=str.lower,choices=("auto","all-files","scoped","none"),default=None,help="Android storage policy (default: auto for --main; preserve project setting for --build/--project)");
     sub=parser.add_subparsers(dest="command");
     doctor=sub.add_parser("doctor",help="check build dependencies"); doctor.add_argument("--json",action="store_true",dest="as_json");
     init=sub.add_parser("init",help="create project.sum"); init.add_argument("directory",nargs="?",default="."); init.add_argument("--name"); init.add_argument("--entrypoint",default="main.py"); init.add_argument("--language",default="python");
@@ -52,7 +55,7 @@ def _parser():
     verify=sub.add_parser("verify",help="verify package checksums"); verify.add_argument("package");
     unpack=sub.add_parser("unpack",help="extract package representation"); unpack.add_argument("package"); unpack.add_argument("-d","--directory",required=True);
     disassemble=sub.add_parser("disassemble",help="reconstruct a SUM project"); disassemble.add_argument("package"); disassemble.add_argument("-d","--directory",required=True);
-    build=sub.add_parser("build",help="build Linux executable or Android APK"); build.add_argument("project",nargs="?",default="."); build.add_argument("--target",type=str.lower,choices=("host","linux","android"),default="host"); build.add_argument("--backend",default=None,help="backend: Linux auto/nuitka/pyinstaller; Android auto/p4a/buildozer"); build.add_argument("--prepare",action="store_true",help="prepare staging/tool command without invoking external builder"); build.add_argument("--name",dest="build_name",help="override application name for this build"); build.add_argument("--storage",dest="build_storage",type=str.lower,choices=("auto","all-files","scoped","none"),help="override Android storage policy for this build");
+    build=sub.add_parser("build",help="build Linux executable or Android APK"); build.add_argument("project",nargs="?",default="."); build.add_argument("--target",type=str.lower,choices=("host","linux","android"),default="host"); build.add_argument("--backend",default=None,help="backend: Linux auto/nuitka/pyinstaller; Android defaults to p4a (buildozer only when requested)"); build.add_argument("--prepare",action="store_true",help="prepare staging/tool command without invoking external builder"); build.add_argument("--name",dest="build_name",help="override application name for this build"); build.add_argument("--storage",dest="build_storage",type=str.lower,choices=("auto","all-files","scoped","none"),help="override Android storage policy for this build");
     return parser;
 
 
@@ -91,6 +94,16 @@ def main(argv=None):
             target=args.shortcut_target;
             if target in ("host","linux"):
                 if not sys.platform.startswith("linux"): raise BuildError("Linux and Android are the active targets in this milestone")
+                result=build_host(project,args.shortcut_prepare,args.shortcut_backend);
+            else:
+                result=build_android(project,args.shortcut_prepare,args.shortcut_backend);
+            print(json.dumps(result,indent=2)); return 0;
+        alias_project=args.build_alias_project or args.project_alias_project;
+        if alias_project:
+            project=_project_with_build_overrides(alias_project,args.shortcut_name,args.shortcut_storage);
+            target=args.shortcut_target;
+            if target in ("host","linux"):
+                if not sys.platform.startswith("linux"): raise BuildError("Linux and Android are the active targets in this milestone");
                 result=build_host(project,args.shortcut_prepare,args.shortcut_backend);
             else:
                 result=build_android(project,args.shortcut_prepare,args.shortcut_backend);

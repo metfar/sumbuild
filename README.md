@@ -1,4 +1,4 @@
-> Current Android compatibility revision: **0.1.0a32** — Android lifecycle/storage + SUM presplash + maximized run output + shared p4a source cache.
+> Current Android compatibility revision: **0.1.0a33** — p4a-by-default CLI + project aliases + standalone Restart/Exit completion dialog.
 
 > Latest Android compatibility notes: see `README-a32.md`.
 
