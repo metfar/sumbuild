@@ -14,4 +14,4 @@ NEXT Frequency!
 BEEP 1, 0
 SOUND 262, 18.2
 
-END
+SYSTEM

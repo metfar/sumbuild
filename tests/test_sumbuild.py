@@ -258,3 +258,25 @@ def test_language_runtime_requires_complete_sum_ecosystem():
     source=(root/"src"/"sumbuild"/"backends.py").read_text(encoding="utf-8");
     assert "required=SUM_ANDROID_ECOSYSTEM_PACKAGES" in source;
     assert "sum-full-app" in source;
+
+
+def test_android_sumbasic_runtime_templates_support_modal_input_and_system():
+    root=Path(__file__).resolve().parents[1];
+    ide=(root/'src'/'sumbuild'/'android_runtime'/'sumbasic_ide.py').read_text(encoding='utf-8');
+    interpreter=(root/'src'/'sumbuild'/'android_runtime'/'sumbasic_interpreter.py').read_text(encoding='utf-8');
+    assert 'def _poll_basic_input(self):' in ide;
+    assert 'TextInput("")' in ide;
+    assert 'self.app.push_modal(dialog)' in ide;
+    assert 'return self._application_dispatch(event)' in ide;
+    assert 'system_exit_requested' in interpreter;
+    assert 'if upper == "SYSTEM"' in interpreter;
+    assert 'if upper == "END": raise _StopProgram()' in interpreter;
+    assert 'return self._quit_now()' in ide;
+
+
+def test_sumbuild_ships_extended_basic_acceptance_examples():
+    root=Path(__file__).resolve().parents[1];
+    for name in ('hello.bas','sound.bas','bgi_style_smile.bas','retro_lines.bas','retro_clock.bas'):
+        assert (root/'examples'/name).exists();
+    assert 'INPUT "Your name"; name$' in (root/'examples'/'hello.bas').read_text(encoding='utf-8');
+    assert (root/'examples'/'sound.bas').read_text(encoding='utf-8').rstrip().endswith('SYSTEM');

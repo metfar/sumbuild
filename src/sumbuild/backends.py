@@ -323,6 +323,18 @@ def _patch_android_sumtui_storage(vendor):
 
 
 
+def _patch_android_sumbasic_frontend(vendor):
+    """Install the Android-capable sumBASIC IDE/input and END/SYSTEM frontend.""";
+    vendor=Path(vendor); package=vendor / "sumbasic";
+    if not package.exists(): return False;
+    runtime=Path(__file__).resolve().parent / "android_runtime";
+    ide=runtime / "sumbasic_ide.py"; interpreter=runtime / "sumbasic_interpreter.py";
+    if not ide.exists() or not interpreter.exists(): raise BuildError("sumBASIC Android runtime templates are missing");
+    shutil.copy2(str(ide),str(package / "ide.py"));
+    shutil.copy2(str(interpreter),str(package / "interpreter.py"));
+    return True;
+
+
 def _patch_android_sumcore_audio(vendor):
     """Route finite SUM tones through SDL2 queued audio inside packaged apps.""";
     audio=Path(vendor) / "sumcore" / "audio.py";
@@ -402,6 +414,7 @@ def _stage_sum_ecosystem(vendor, required=()):
         services=Path(__file__).resolve().parent / "android_runtime" / "sdl2_services.py";
         if services.exists(): shutil.copy2(str(services),str(gui / "sdl2_services.py"));
     _patch_android_sumtui_storage(vendor);
+    _patch_android_sumbasic_frontend(vendor);
     _patch_android_sumcore_audio(vendor);
     return copied;
 

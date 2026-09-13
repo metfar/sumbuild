@@ -1,5 +1,7 @@
 # sumBuild
 
+See `README-a23.md` for Android sumBASIC modal INPUT and END/SYSTEM semantics.
+
 See `README-a22.md` for the full-runtime Android policy and bundled BASIC smoke examples. 0.1.0a2
 
 Project/build layer for the SUM ecosystem.
