@@ -28,6 +28,7 @@ import sys;
 import struct;
 import zlib;
 import binascii;
+import importlib.util;
 from .project import SumProject;
 from .transpile import TranspileError, transpile_sumgui_easy;
 
@@ -122,6 +123,26 @@ def _android_requirements(project):
     if not isinstance(values, list) or not values: raise BuildError("build.android.requirements must be a non-empty list");
     return [str(item) for item in values];
 
+
+def _android_permissions(project):
+    settings=_android_settings(project);
+    values=settings.get("permissions", []);
+    if values in (None,False): values=[];
+    if not isinstance(values,list): raise BuildError("build.android.permissions must be a list");
+    result=[];
+    for value in values:
+        text=str(value).strip();
+        if text and text not in result: result.append(text);
+    storage=str(settings.get("storage_access","scoped") or "scoped").strip().lower();
+    if storage not in ("scoped","none","all-files"): raise BuildError("build.android.storage_access expects scoped, none, or all-files");
+    if storage == "all-files":
+        for text in (
+            "android.permission.MANAGE_EXTERNAL_STORAGE",
+            "(name=android.permission.READ_EXTERNAL_STORAGE;maxSdkVersion=32)",
+            "(name=android.permission.WRITE_EXTERNAL_STORAGE;maxSdkVersion=28)",
+        ):
+            if text not in result: result.append(text);
+    return result;
 
 def _android_settings(project):
     value=project.build.get("android", {});
@@ -225,11 +246,59 @@ def _android_environment(project):
     };
     return env,summary;
 
+def _copy_import_package(name,destination):
+    spec=importlib.util.find_spec(name);
+    if spec is None: raise BuildError("SUM runtime package '{}' is not installed; install the matching SUM package before building this source".format(name));
+    locations=list(spec.submodule_search_locations or []);
+    if locations:
+        source=Path(locations[0]); target=Path(destination) / name;
+        if target.exists(): shutil.rmtree(str(target));
+        shutil.copytree(str(source),str(target),ignore=shutil.ignore_patterns("__pycache__","*.pyc"));
+        return target;
+    if not spec.origin: raise BuildError("cannot locate runtime package '{}'".format(name));
+    target=Path(destination) / (name + ".py"); shutil.copy2(str(spec.origin),str(target)); return target;
+
+
+def _stage_language_runtime(project,directory):
+    language=project.language;
+    if language == "python": return None;
+    bundles={
+        "sumbasic":(["sumbasic","sumui","sumtui","sumide","sumkeyboard"],"main_basic"),
+        "sumx":(["sumx","sumui","sumtui","sumide","sumkeyboard"],"main_xbase"),
+        "sumr":(["sumr","sumui","sumtui","sumide"],"main_r"),
+    };
+    if language not in bundles: raise BuildError("Android runtime adapter is not defined for language={}".format(language));
+    packages,entry_func=bundles[language];
+    vendor=Path(directory) / "vendor"; vendor.mkdir(parents=True,exist_ok=True);
+    for package in packages: _copy_import_package(package,vendor);
+    # Use the already validated ctypes/SDL application backend rather than the
+    # desktop Pygame implementation whenever sumIDE/sumTUI requests sumGUI.
+    template=Path(__file__).resolve().parent / "android_runtime" / "sumgui_application_backend.py";
+    if template.exists():
+        gui=vendor / "sumgui"; gui.mkdir(parents=True,exist_ok=True);
+        init=gui / "__init__.py";
+        if not init.exists(): init.write_text('from .application_backend import *;\n',encoding="utf-8");
+        shutil.copy2(str(template),str(gui / "application_backend.py"));
+    source=project.entrypoint;
+    wrapper=(
+        'import sys;\n'
+        'from pathlib import Path;\n'
+        'ROOT=Path(__file__).resolve().parent;\n'
+        'sys.path.insert(0,str(ROOT / "vendor"));\n'
+        'from sumide.app import {func};\n'
+        'raise SystemExit({func}(["--gui","--run",str(ROOT / {src!r})]));\n'
+    ).format(func=entry_func,src=source);
+    (Path(directory) / "main.py").write_text(wrapper,encoding="utf-8");
+    return {"runtime":language,"packages":packages,"adapter":"sumide-gui-run"};
+
+
 def _stage_android(project, directory):
     _copy_payload(project, directory);
     entry=directory / project.entrypoint;
     if not entry.exists(): raise BuildError("entrypoint not staged: {}".format(project.entrypoint));
     settings=_android_settings(project);
+    runtime_stage=_stage_language_runtime(project,directory);
+    if runtime_stage is not None: return {"transpiled":True,"transpiler":"sum-runtime-adapter","source":str(entry),"runtime":runtime_stage};
     mode=str(settings.get("transpile","")).strip().lower();
     backend=str(project.interface.get("backend","")).strip().lower();
     should_transpile=(mode == "sumgui-easy") or (mode in ("auto","true","1") and backend == "sumgui");
@@ -308,7 +377,6 @@ def _android_icon(project, directory):
 
 def prepare_android(project, directory=None, backend=None, details=False):
     project=project if isinstance(project, SumProject) else SumProject.load(project);
-    if project.language != "python": raise BuildError("Android backend currently supports language=python; SUM runtime adapters come next");
     selected=select_android_backend(project,backend);
     directory=Path(directory or (project.root / "build" / "android" / selected)).resolve();
     if directory.exists(): shutil.rmtree(str(directory));
@@ -322,6 +390,7 @@ def prepare_android(project, directory=None, backend=None, details=False):
     mode=str(settings.get("mode","debug")).lower();
     arch=str(settings.get("arch","arm64-v8a"));
     requirements=_android_requirements(project);
+    permissions=_android_permissions(project);
     icon=_android_icon(project,directory);
     runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"icon":"sum" if icon and icon.name == "sum-default-icon.png" else (str(icon.name) if icon else None),"font_size":project.interface.get("font_size","auto"),"font_auto":project.interface.get("font_auto",{}),"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto"}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"exit_button":project.interface.get("exit_button","auto"),"transpile":stage};
     (directory / "sum-android.json").write_text(__import__("json").dumps(runtime,indent=2,ensure_ascii=False)+"\n",encoding="utf-8");
@@ -329,6 +398,7 @@ def prepare_android(project, directory=None, backend=None, details=False):
         command=["p4a","apk","--private",str(directory),"--package={}".format(package),"--name={}".format(project.name),"--version={}".format(project.version),"--bootstrap=sdl2","--requirements={}".format(",".join(requirements)),"--arch={}".format(arch)];
         if mode == "debug": command.append("--debug");
         if icon is not None: command.append("--icon={}".format(icon));
+        for permission in permissions: command.append("--permission={}".format(permission));
         if orientation == "auto":
             # p4a 2026 accepts multiple allowed orientations.  Supplying all
             # four makes the manifest unspecified and feeds SDL the full
@@ -343,6 +413,7 @@ def prepare_android(project, directory=None, backend=None, details=False):
         return result if details else result[:2];
     spec="""[app]\ntitle = {title}\npackage.name = {package_name}\npackage.domain = {domain}\nsource.dir = .\nsource.include_exts = py,png,jpg,jpeg,gif,svg,json,txt,md,csv,rds,sum,bas,prg,R,yaml,yml\nversion = {version}\nrequirements = {requirements}\nfullscreen = 0\n\n[buildozer]\nlog_level = 2\nwarn_on_root = 1\n""".format(title=project.name,package_name=package_name,domain=domain,version=project.version,requirements=",".join(requirements));
     if icon is not None: spec=spec.replace("version = {}".format(project.version),"version = {}\nicon.filename = {}".format(project.version,icon.name));
+    if permissions: spec=spec.replace("requirements = {}".format(",".join(requirements)),"requirements = {}\nandroid.permissions = {}".format(",".join(requirements),", ".join(permissions)));
     if orientation in ("auto","sensor"): spec=spec.replace("fullscreen = 0","orientation = all\nfullscreen = 0");
     else: spec=spec.replace("fullscreen = 0","orientation = {}\nfullscreen = 0".format(orientation));
     (directory / "buildozer.spec").write_text(spec,encoding="utf-8");

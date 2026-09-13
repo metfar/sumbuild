@@ -69,6 +69,11 @@
         "pygments",
         "markdown-it-py",
         "mdurl"
+      ],
+      "permissions": [
+        "android.permission.MANAGE_EXTERNAL_STORAGE",
+        "(name=android.permission.READ_EXTERNAL_STORAGE;maxSdkVersion=32)",
+        "(name=android.permission.WRITE_EXTERNAL_STORAGE;maxSdkVersion=28)"
       ]
     }
   }

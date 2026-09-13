@@ -121,3 +121,62 @@ class SumProject:
         project=cls(root, data);
         (root / PROJECT_FILENAME).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8");
         return project;
+
+
+def infer_main_language(path):
+    """Infer the SUM runtime from a single source filename.""";
+    suffix=Path(path).suffix;
+    lower=suffix.lower();
+    mapping={".py":"python",".bas":"sumbasic",".r":"sumr",".prg":"sumx"};
+    if lower not in mapping: raise ProjectError("--main supports .py, .bas, .r, and .prg; got {}".format(suffix or "<no extension>"));
+    return mapping[lower];
+
+
+def _main_source_profile(path,language):
+    """Infer whether a Python shortcut is a known SUM development application.""";
+    if language != "python": return language;
+    try: text=Path(path).read_text(encoding="utf-8",errors="ignore").lower();
+    except OSError: return "generic";
+    if "sumide" in text: return "sumide";
+    if "sumbasic" in text: return "sumbasic";
+    if "sumx" in text: return "sumx";
+    return "generic";
+
+
+def project_from_main(path,name=None,target="host",backend=None,storage="auto"):
+    """Create an in-memory project for the zero-manifest --main workflow.""";
+    source=Path(path).expanduser().resolve();
+    if not source.is_file(): raise ProjectError("main source not found: {}".format(source));
+    language=infer_main_language(source);
+    profile=_main_source_profile(source,language);
+    target=str(target or "host").lower();
+    storage=str(storage or "auto").lower();
+    if storage not in ("auto","all-files","scoped","none"): raise ProjectError("storage expects auto, all-files, scoped, or none");
+    if storage == "auto": storage="all-files" if profile in ("sumide","sumbasic","sumx","sumr") else "scoped";
+    runtime_requirements={
+        "python":["python3","sdl2"],
+        "sumbasic":["python3","sdl2","rich","pygments","markdown-it-py","mdurl"],
+        "sumx":["python3","sdl2","rich","pygments","markdown-it-py","mdurl"],
+        "sumr":["python3","sdl2"],
+    };
+    data={
+        "sum_project":PROJECT_FORMAT,
+        "name":str(name or source.stem),
+        "version":"0.1.0",
+        "language":language,
+        "entrypoint":source.name,
+        "sources":[source.name],
+        "resources":[],
+        "dependencies":[],
+        "interface":{
+            "screen":"auto","orientation":"auto","font_size":"auto","icon":"sum",
+            "keyboard":{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto","repeat":{"enabled":True,"delay_ms":400,"interval_ms":55}},
+            "shortcuts":{"exit":"F10","fullscreen":"ALT+ENTER"},
+        },
+        "build":{
+            "targets":[target],"console":True,
+            "host":{"backend":backend or "auto"},
+            "android":{"backend":backend or "auto","requirements":runtime_requirements[language],"storage_access":storage,"runtime":language},
+        },
+    };
+    return SumProject(source.parent,data);

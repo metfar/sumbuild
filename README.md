@@ -111,3 +111,34 @@ proportionally tiny while phone controls retain approximately the a12 dimensions
 ### 0.1.0a14 default SUM launcher icon
 
 Android builds now use the project-owned `Σ` SUM icon by default. `interface.icon` accepts `"sum"`/`"auto"` for the generated default, `false`/`"none"` to suppress it, or a project-relative image path for an application-specific icon. The p4a backend emits `--icon=...`; Buildozer receives `icon.filename`.
+
+## 0.1.0a16 single-source builds and storage profiles
+
+A `project.sum` remains the reproducible/full configuration format, but quick builds no longer require one.
+The top-level shortcut accepts Python and SUM language entrypoints directly:
+
+```bash
+sumbuild --main main.py  --target android --backend p4a
+sumbuild --main main.bas --target android --backend p4a
+sumbuild --main main.r   --target android --backend p4a
+sumbuild --main main.prg --target android --backend p4a
+```
+
+Extensions select `python`, `sumbasic`, `sumr`, or `sumx`. Target names are case-insensitive, so `Android`
+is accepted as well. `--prepare`, `--name`, and `--storage auto|all-files|scoped|none` work with the shortcut.
+
+For SUM development/runtime applications (`sumIDE`, `sumBASIC`, `sumX`, `sumR`) `--storage auto` resolves to
+`all-files`; generic Python resolves to scoped storage. The manifest-level form is:
+
+```json
+"build": {"android": {"storage_access": "all-files"}}
+```
+
+which expands to MANAGE_EXTERNAL_STORAGE plus compatibility READ/WRITE permissions. The explicit permission list
+continues to be supported and is merged without duplicates.
+
+For `.bas`, `.prg`, and `.r`, Android staging discovers the installed matching SUM runtime packages, vendors the
+pure-Python runtime into the APK staging tree, and generates a Python `main.py` adapter through the corresponding
+sumIDE language entrypoint. This keeps the source file unchanged. The currently validated Android presentation is
+the shared sumTUI/sumGUI application backend; language-specific pixel-graphics paths that still instantiate desktop
+Pygame directly remain a separate migration target.

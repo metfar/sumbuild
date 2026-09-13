@@ -93,3 +93,33 @@ def test_android_accessory_repeat_contract():
     assert 'def _process_accessory_repeat(self):' in source
     assert 'def _begin_accessory_hold(self,key):' in source
     assert 'def _end_accessory_hold(self):' in source
+
+
+def test_single_main_language_inference(tmp_path):
+    from sumbuild.project import infer_main_language, project_from_main;
+    for filename,language in (("main.py","python"),("main.bas","sumbasic"),("main.r","sumr"),("main.R","sumr"),("main.prg","sumx")):
+        path=tmp_path / filename; path.write_text("\n",encoding="utf-8");
+        assert infer_main_language(path) == language;
+        project=project_from_main(path,target="Android",backend="p4a");
+        assert project.language == language;
+        assert project.build["android"]["backend"] == "p4a";
+    assert project_from_main(tmp_path / "main.prg",target="android").build["android"]["storage_access"] == "all-files";
+
+
+def test_single_python_storage_profile(tmp_path):
+    from sumbuild.project import project_from_main;
+    generic=tmp_path / "main.py"; generic.write_text("print(1)\n",encoding="utf-8");
+    assert project_from_main(generic,target="android").build["android"]["storage_access"] == "scoped";
+    ide=tmp_path / "ide.py"; ide.write_text("from sumide.app import main\n",encoding="utf-8");
+    assert project_from_main(ide,target="android").build["android"]["storage_access"] == "all-files";
+
+
+def test_android_all_files_permission_profile(tmp_path):
+    import json;
+    from sumbuild.backends import prepare_android;
+    project=tmp_path / "project.sum"; source=tmp_path / "main.py"; source.write_text("print(1)\n",encoding="utf-8");
+    project.write_text(json.dumps({"sum_project":1,"name":"files","entrypoint":"main.py","sources":["main.py"],"interface":{},"build":{"android":{"backend":"p4a","requirements":["python3","sdl2"],"storage_access":"all-files"}}}),encoding="utf-8");
+    _,command=prepare_android(project,backend="p4a");
+    assert "--permission=android.permission.MANAGE_EXTERNAL_STORAGE" in command;
+    assert "--permission=(name=android.permission.READ_EXTERNAL_STORAGE;maxSdkVersion=32)" in command;
+    assert "--permission=(name=android.permission.WRITE_EXTERNAL_STORAGE;maxSdkVersion=28)" in command;

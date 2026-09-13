@@ -28,7 +28,7 @@ from . import __version__;
 from .backends import BuildError, build_android, build_host;
 from .doctor import print_report, report;
 from .package import create_package, disassemble_package, inspect_package, unpack_package, verify_package;
-from .project import PROJECT_FILENAME, ProjectError, SumProject;
+from .project import PROJECT_FILENAME, ProjectError, SumProject, project_from_main;
 
 
 def _parser():
@@ -36,6 +36,14 @@ def _parser():
     parser.add_argument("--version",action="version",version="sumbuild {}".format(__version__));
     parser.add_argument("--doctor",action="store_true",dest="doctor_flag",help="check build dependencies");
     parser.add_argument("--doctor-json",action="store_true",dest="doctor_json",help="check build dependencies as JSON");
+    # Single-source shortcut.  This deliberately lives at top level so the
+    # common case is exactly: sumbuild --main main.bas --target android --backend p4a
+    parser.add_argument("--main",dest="main_file",help="build one source file without a project.sum (.py/.bas/.r/.prg)");
+    parser.add_argument("--target",dest="shortcut_target",type=str.lower,choices=("host","linux","windows","macos","android"),default="host",help="target for --main shortcut");
+    parser.add_argument("--backend",dest="shortcut_backend",default=None,help="backend for --main shortcut");
+    parser.add_argument("--prepare",dest="shortcut_prepare",action="store_true",help="prepare only for --main shortcut");
+    parser.add_argument("--name",dest="shortcut_name",help="application name for --main shortcut");
+    parser.add_argument("--storage",dest="shortcut_storage",type=str.lower,choices=("auto","all-files","scoped","none"),default="auto",help="Android storage policy for --main shortcut");
     sub=parser.add_subparsers(dest="command");
     doctor=sub.add_parser("doctor",help="check build dependencies"); doctor.add_argument("--json",action="store_true",dest="as_json");
     init=sub.add_parser("init",help="create project.sum"); init.add_argument("directory",nargs="?",default="."); init.add_argument("--name"); init.add_argument("--entrypoint",default="main.py"); init.add_argument("--language",default="python");
@@ -44,7 +52,7 @@ def _parser():
     verify=sub.add_parser("verify",help="verify package checksums"); verify.add_argument("package");
     unpack=sub.add_parser("unpack",help="extract package representation"); unpack.add_argument("package"); unpack.add_argument("-d","--directory",required=True);
     disassemble=sub.add_parser("disassemble",help="reconstruct a SUM project"); disassemble.add_argument("package"); disassemble.add_argument("-d","--directory",required=True);
-    build=sub.add_parser("build",help="build host executable or Android APK"); build.add_argument("project",nargs="?",default="."); build.add_argument("--target",choices=("host","linux","windows","macos","android"),default="host"); build.add_argument("--backend",default=None,help="backend: host auto/nuitka/pyinstaller; android auto/p4a/buildozer"); build.add_argument("--prepare",action="store_true",help="prepare staging/tool command without invoking external builder");
+    build=sub.add_parser("build",help="build host executable or Android APK"); build.add_argument("project",nargs="?",default="."); build.add_argument("--target",type=str.lower,choices=("host","linux","windows","macos","android"),default="host"); build.add_argument("--backend",default=None,help="backend: host auto/nuitka/pyinstaller; android auto/p4a/buildozer"); build.add_argument("--prepare",action="store_true",help="prepare staging/tool command without invoking external builder");
     return parser;
 
 
@@ -58,8 +66,17 @@ def _doctor(as_json=False):
 def main(argv=None):
     parser=_parser(); args=parser.parse_args(argv);
     if args.doctor_flag or args.doctor_json: return _doctor(args.doctor_json);
-    if not args.command: parser.print_help(); return 0;
     try:
+        if args.main_file:
+            project=project_from_main(args.main_file,name=args.shortcut_name,target=args.shortcut_target,backend=args.shortcut_backend,storage=args.shortcut_storage);
+            target=args.shortcut_target;
+            if target in ("host","linux","windows","macos"):
+                if target != "host" and not sys.platform.startswith({"linux":"linux","windows":"win","macos":"darwin"}[target]): raise BuildError("explicit cross-platform host compilation is not implemented yet; use target=host on the target OS")
+                result=build_host(project,args.shortcut_prepare,args.shortcut_backend);
+            else:
+                result=build_android(project,args.shortcut_prepare,args.shortcut_backend);
+            print(json.dumps(result,indent=2)); return 0;
+        if not args.command: parser.print_help(); return 0;
         if args.command == "doctor": return _doctor(args.as_json);
         if args.command == "init":
             root=Path(args.directory); name=args.name or root.resolve().name; project=SumProject.create(root,name,args.entrypoint,args.language);
