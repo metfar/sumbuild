@@ -22,6 +22,7 @@
 
 """Android SDL2/ctypes renderer for a normal SumTUI application tree.""";
 import ctypes;
+import json;
 import os;
 import threading;
 import time;
@@ -29,6 +30,10 @@ import time;
 from rich.cells import get_character_cell_size;
 from rich.console import Console, ConsoleDimensions;
 from sumtui.events import Key, KeyEvent, MouseEvent, ResizeEvent;
+try:
+    from sumkeyboard.profiles import get_profile;
+except Exception:
+    get_profile=None;
 
 SDL_INIT_VIDEO=0x00000020;
 SDL_WINDOW_FULLSCREEN_DESKTOP=0x00001001;
@@ -128,18 +133,76 @@ def _bind_ttf(ttf):
     ttf.TTF_CloseFont.argtypes=[ctypes.c_void_p]; ttf.TTF_CloseFont.restype=None;
     ttf.TTF_SizeUTF8.argtypes=[ctypes.c_void_p,ctypes.c_char_p,ctypes.POINTER(ctypes.c_int),ctypes.POINTER(ctypes.c_int)]; ttf.TTF_SizeUTF8.restype=ctypes.c_int;
     ttf.TTF_RenderUTF8_Blended.argtypes=[ctypes.c_void_p,ctypes.c_char_p,SDL_Color]; ttf.TTF_RenderUTF8_Blended.restype=ctypes.c_void_p;
+    if hasattr(ttf,"TTF_GlyphIsProvided32"):
+        ttf.TTF_GlyphIsProvided32.argtypes=[ctypes.c_void_p,ctypes.c_uint32]; ttf.TTF_GlyphIsProvided32.restype=ctypes.c_int;
+    if hasattr(ttf,"TTF_FontFaceIsFixedWidth"):
+        ttf.TTF_FontFaceIsFixedWidth.argtypes=[ctypes.c_void_p]; ttf.TTF_FontFaceIsFixedWidth.restype=ctypes.c_int;
 
 
-def _font_path():
-    candidates=[
-        "/system/fonts/RobotoMono-Regular.ttf",
-        "/system/fonts/DroidSansMono.ttf",
+def _runtime_config():
+    try:
+        root=os.path.abspath(os.path.join(os.path.dirname(__file__),"..",".."));
+        path=os.path.join(root,"sum-android.json");
+        if os.path.isfile(path):
+            with open(path,"r",encoding="utf-8") as stream: return json.load(stream);
+    except Exception: pass;
+    return {};
+
+
+def _font_candidates():
+    preferred=[
         "/system/fonts/NotoSansMono-Regular.ttf",
-        "/system/fonts/Roboto-Regular.ttf",
+        "/system/fonts/DroidSansMono.ttf",
+        "/system/fonts/RobotoMono-Regular.ttf",
+        "/system/fonts/RobotoMono-Medium.ttf",
+        "/system/fonts/NotoSansSymbols2-Regular.ttf",
+        "/system/fonts/NotoSansSymbols-Regular.ttf",
     ];
-    for path in candidates:
-        if os.path.isfile(path): return path;
-    raise RuntimeError("No usable Android system font was found");
+    seen=set(); result=[];
+    for path in preferred:
+        if path not in seen and os.path.isfile(path): seen.add(path); result.append(path);
+    for base in ("/system/fonts","/product/fonts","/vendor/fonts"):
+        if not os.path.isdir(base): continue;
+        try:
+            for name in sorted(os.listdir(base)):
+                if not name.lower().endswith((".ttf",".otf")): continue;
+                path=os.path.join(base,name);
+                if path not in seen and os.path.isfile(path): seen.add(path); result.append(path);
+        except OSError: pass;
+    return result;
+
+
+def _font_has(ttf,font,text):
+    check=getattr(ttf,"TTF_GlyphIsProvided32",None);
+    if check is None: return False;
+    return all(bool(check(font,ord(char))) for char in text);
+
+
+def _choose_fonts(ttf,size):
+    borders="─│┌┐└┘├┤┬┴┼╭╮╰╯";
+    primary=None; primary_path=None; border=None; border_path=None; first=None; first_path=None;
+    fixed_check=getattr(ttf,"TTF_FontFaceIsFixedWidth",None);
+    for path in _font_candidates():
+        font=ttf.TTF_OpenFont(path.encode("utf-8"),int(size));
+        if not font: continue;
+        if first is None: first=font; first_path=path;
+        fixed=bool(fixed_check(font)) if fixed_check is not None else ("Mono" in os.path.basename(path));
+        has_borders=_font_has(ttf,font,borders);
+        if primary is None and fixed:
+            primary=font; primary_path=path;
+        elif font is not first:
+            # Keep only fonts that may still become the border fallback.
+            if not has_borders: ttf.TTF_CloseFont(font); font=None;
+        if has_borders and border is None and font:
+            border=font; border_path=path;
+        if primary and border: break;
+    if primary is None:
+        primary=first; primary_path=first_path;
+    elif first and first!=primary and first!=border:
+        ttf.TTF_CloseFont(first);
+    if not primary: raise RuntimeError("No usable Android system font was found");
+    if border is None: border=primary; border_path=primary_path;
+    return primary,primary_path,border,border_path;
 
 
 def _triplet(color,fallback):
@@ -150,15 +213,30 @@ def _triplet(color,fallback):
 
 
 class GraphicalApplicationBackend:
-    def __init__(self,application,title=None,font_size=18,fps=30,**_kwargs):
+    def __init__(self,application,title=None,font_size=None,fps=30,**_kwargs):
         self.application=application;
         self.title=str(title or getattr(application,"title","SUM application"));
-        self.font_size=max(12,int(font_size)); self.fps=max(10,int(fps));
-        self.sdl=None; self.ttf=None; self.window=None; self.renderer=None; self.font=None;
+        self.runtime=_runtime_config();
+        configured=self.runtime.get("font_size",24) if font_size is None else font_size;
+        try: configured=int(configured);
+        except (TypeError,ValueError): configured=24;
+        self.font_size=max(18,configured); self.fps=max(10,int(fps));
+        self.sdl=None; self.ttf=None; self.window=None; self.renderer=None; self.font=None; self.border_font=None;
+        self.font_path=None; self.border_font_path=None;
         self.cell_width=10; self.cell_height=20; self.columns=80; self.rows=24;
         self.console=None; self.width=640; self.height=480; self._left_down=False;
         self._texture_cache={}; self._redraw_requested=True;
-        self._keyboard_visible=False; self.overlay_height=54;
+        self._keyboard_visible=False; self.overlay_height=112;
+        keyboard=self.runtime.get("keyboard",{});
+        self.keyboard_reserve=keyboard.get("reserve","auto") if isinstance(keyboard,dict) else "auto";
+        self.keyboard_accessory=keyboard.get("accessory","auto") if isinstance(keyboard,dict) else "auto";
+        self.keyboard_profile=keyboard.get("profile","keybar") if isinstance(keyboard,dict) else "keybar";
+        self._accessory_page="nav"; self._latched_ctrl=False; self._latched_alt=False;
+        self._accessory_hitboxes=[]; self._content_bottom=self.height-self.overlay_height;
+        self._accessory_profile=None;
+        if get_profile is not None:
+            try: self._accessory_profile=get_profile(self.keyboard_profile if self.keyboard_profile not in (None,"auto",True) else "keybar");
+            except Exception: self._accessory_profile=None;
 
     def request_redraw(self): self._redraw_requested=True; return True;
     def set_key_repeat(self,*_args,**_kwargs): return (0,0);
@@ -173,16 +251,28 @@ class GraphicalApplicationBackend:
         if not self.renderer: self.renderer=self.sdl.SDL_CreateRenderer(self.window,-1,SDL_RENDERER_ACCELERATED);
         if not self.renderer: self.renderer=self.sdl.SDL_CreateRenderer(self.window,-1,SDL_RENDERER_SOFTWARE);
         if not self.renderer: raise RuntimeError("SDL_CreateRenderer: "+self.sdl.SDL_GetError().decode("utf-8","replace"));
-        self.font=self.ttf.TTF_OpenFont(_font_path().encode("utf-8"),self.font_size);
-        if not self.font: raise RuntimeError("TTF_OpenFont failed");
+        self.font,self.font_path,self.border_font,self.border_font_path=_choose_fonts(self.ttf,self.font_size);
         w=ctypes.c_int(); h=ctypes.c_int(); self.ttf.TTF_SizeUTF8(self.font,b"M",ctypes.byref(w),ctypes.byref(h));
-        self.cell_width=max(6,int(w.value)); self.cell_height=max(10,int(h.value)+2);
-        self.sdl.SDL_StartTextInput(); self._keyboard_visible=True;
+        self.cell_width=max(7,int(w.value)); self.cell_height=max(12,int(h.value)+3); self.overlay_height=max(112,self.cell_height*2+34);
+        self.sdl.SDL_StopTextInput(); self._keyboard_visible=False;
         self._resize();
+
+    def _keyboard_reserved_pixels(self):
+        if not self._keyboard_visible: return 0;
+        value=self.keyboard_reserve;
+        if value in (False,None,"none","off","false",0): return 0;
+        if value == "auto": ratio=0.42 if self.height>=self.width else 0.52;
+        else:
+            try: ratio=float(value);
+            except (TypeError,ValueError): ratio=0.42 if self.height>=self.width else 0.52;
+            if ratio>1.0: return max(0,min(int(ratio),self.height-self.cell_height*8));
+            ratio=max(0.0,min(0.75,ratio));
+        return max(0,min(int(self.height*ratio),self.height-self.cell_height*8));
 
     def _resize(self):
         w=ctypes.c_int(); h=ctypes.c_int(); self.sdl.SDL_GetRendererOutputSize(self.renderer,ctypes.byref(w),ctypes.byref(h)); self.width=max(1,w.value); self.height=max(1,h.value);
-        usable=max(self.cell_height*8,self.height-self.overlay_height);
+        reserved=self._keyboard_reserved_pixels(); self._content_bottom=max(self.overlay_height+self.cell_height*8,self.height-reserved);
+        usable=max(self.cell_height*8,self._content_bottom-self.overlay_height);
         self.columns=max(20,self.width//self.cell_width); self.rows=max(8,usable//self.cell_height);
         self.console=Console(width=self.columns,height=self.rows,color_system="truecolor",force_terminal=True,legacy_windows=False,soft_wrap=False);
         self.application.last_size=ConsoleDimensions(self.columns,self.rows); self.application.dispatch(ResizeEvent(self.columns,self.rows));
@@ -191,10 +281,15 @@ class GraphicalApplicationBackend:
     def _fill(self,x,y,w,h,color):
         self.sdl.SDL_SetRenderDrawColor(self.renderer,*color,255); rect=SDL_Rect(int(x),int(y),max(1,int(w)),max(1,int(h))); self.sdl.SDL_RenderFillRect(self.renderer,ctypes.byref(rect));
 
+    def _font_for_char(self,char):
+        check=getattr(self.ttf,"TTF_GlyphIsProvided32",None);
+        if check is not None and not check(self.font,ord(char)) and self.border_font and check(self.border_font,ord(char)): return self.border_font;
+        return self.font;
+
     def _glyph(self,char,fg):
-        key=(char,tuple(fg)); cached=self._texture_cache.get(key);
+        font=self._font_for_char(char); key=(char,tuple(fg),int(font or 0)); cached=self._texture_cache.get(key);
         if cached: return cached;
-        raw=char.encode("utf-8","replace"); surface=self.ttf.TTF_RenderUTF8_Blended(self.font,raw,SDL_Color(fg[0],fg[1],fg[2],255));
+        raw=char.encode("utf-8","replace"); surface=self.ttf.TTF_RenderUTF8_Blended(font,raw,SDL_Color(fg[0],fg[1],fg[2],255));
         if not surface: return None;
         texture=self.sdl.SDL_CreateTextureFromSurface(self.renderer,surface); self.sdl.SDL_FreeSurface(surface);
         if not texture: return None;
@@ -217,14 +312,39 @@ class GraphicalApplicationBackend:
         options=self.console.options.update(width=self.columns,height=self.rows);
         return self.console.render_lines(self.application._renderable(),options=options,pad=True,new_lines=False);
 
+    def _accessory_rows(self):
+        # The key names come from sumKeyboard's keybar contract.  The Android
+        # overlay paginates that profile so it remains touchable in portrait.
+        if self._accessory_page == "fn":
+            return [
+                [("F1",Key.F1),("F2",Key.F2),("F3",Key.F3),("F4",Key.F4),("F5",Key.F5),("F6",Key.F6),("NAV","page-nav")],
+                [("F7",Key.F7),("F8",Key.F8),("F9",Key.F9),("F10",Key.F10),("F11",Key.F11),("F12",Key.F12),("KEY","keyboard"),("EXIT","exit")],
+            ];
+        return [
+            [("Esc",Key.ESCAPE),("Ctrl","ctrl"),("Alt","alt"),("Tab",Key.TAB),("←",Key.LEFT),("↑",Key.UP),("↓",Key.DOWN),("→",Key.RIGHT),("FN","page-fn")],
+            [("Home",Key.HOME),("End",Key.END),("PgUp",Key.PAGE_UP),("PgDn",Key.PAGE_DOWN),("Ins",Key.INSERT),("Del",Key.DELETE),("KEY","keyboard"),("EXIT","exit")],
+        ];
+
+    def _draw_overlay_button(self,label,action,rect,active=False):
+        bg=(58,74,82) if active else (26,26,32);
+        self._fill(rect.x,rect.y,rect.w,rect.h,bg);
+        self.sdl.SDL_SetRenderDrawColor(self.renderer,190,195,205,255); self.sdl.SDL_RenderDrawRect(self.renderer,ctypes.byref(rect));
+        text=str(label); cells=sum(max(1,get_character_cell_size(ch)) for ch in text);
+        col=max(0,(rect.x + max(4,(rect.w-cells*self.cell_width)//2))//self.cell_width);
+        row=max(0,(rect.y + max(2,(rect.h-self.cell_height)//2))//self.cell_height);
+        for ch in text: col+=self._draw_text_cell(ch,col,row,(245,245,248),bg);
+        self._accessory_hitboxes.append((rect,action));
+
     def _overlay(self):
-        y=self.height-self.overlay_height; self._fill(0,y,self.width,self.overlay_height,(26,26,32));
-        kb=SDL_Rect(8,y+7,78,self.overlay_height-14); ex=SDL_Rect(self.width-94,y+7,86,self.overlay_height-14);
-        self.sdl.SDL_SetRenderDrawColor(self.renderer,180,180,190,255); self.sdl.SDL_RenderDrawRect(self.renderer,ctypes.byref(kb)); self.sdl.SDL_RenderDrawRect(self.renderer,ctypes.byref(ex));
-        # Unicode keyboard symbol plus labels, rendered as normal glyphs.
-        for text,x in (("KEY",18),("EXIT",self.width-82)):
-            col=x//self.cell_width; row=(y+14)//self.cell_height;
-            for ch in text: col+=self._draw_text_cell(ch,col,row,(240,240,245),(26,26,32));
+        y=self._content_bottom-self.overlay_height; self._fill(0,y,self.width,self.overlay_height,(18,18,24));
+        self._accessory_hitboxes=[]; rows=self._accessory_rows(); gap=4; pad=6; row_h=max(42,(self.overlay_height-pad*2-gap)//2);
+        for row_index,row in enumerate(rows):
+            count=max(1,len(row)); available=self.width-pad*2-gap*(count-1); button_w=max(42,available//count);
+            yy=y+pad+row_index*(row_h+gap); x=pad;
+            for index,(label,action) in enumerate(row):
+                width=button_w if index<count-1 else max(42,self.width-pad-x); rect=SDL_Rect(x,yy,width,row_h);
+                active=(action=="ctrl" and self._latched_ctrl) or (action=="alt" and self._latched_alt) or (action=="keyboard" and self._keyboard_visible);
+                self._draw_overlay_button(label,action,rect,active=active); x+=width+gap;
 
     def _draw(self):
         theme=getattr(self.application,"theme",None); default_fg=tuple(getattr(theme,"text",(235,245,250))); default_bg=tuple(getattr(theme,"bg",(0,0,0)));
@@ -248,8 +368,14 @@ class GraphicalApplicationBackend:
 
     def _mods(self,mod): return bool(mod&KMOD_CTRL),bool(mod&KMOD_ALT),bool(mod&KMOD_SHIFT);
 
+    def _consume_latched_modifiers(self,ctrl=False,alt=False):
+        effective_ctrl=bool(ctrl or self._latched_ctrl); effective_alt=bool(alt or self._latched_alt);
+        self._latched_ctrl=False; self._latched_alt=False; self._redraw_requested=True;
+        return effective_ctrl,effective_alt;
+
     def _key(self,event,action):
         sym=event.keysym.sym; ctrl,alt,shift=self._mods(event.keysym.mod);
+        if action != "release": ctrl,alt=self._consume_latched_modifiers(ctrl,alt);
         mapping={SDLK_ESCAPE:Key.ESCAPE,SDLK_RETURN:Key.ENTER,SDLK_BACKSPACE:Key.BACKSPACE,SDLK_DELETE:Key.DELETE,SDLK_INSERT:Key.INSERT,SDLK_TAB:Key.TAB,SDLK_SPACE:Key.SPACE,SDLK_UP:Key.UP,SDLK_DOWN:Key.DOWN,SDLK_LEFT:Key.LEFT,SDLK_RIGHT:Key.RIGHT,SDLK_HOME:Key.HOME,SDLK_END:Key.END,SDLK_PAGEUP:Key.PAGE_UP,SDLK_PAGEDOWN:Key.PAGE_DOWN};
         for idx in range(12): mapping[SDLK_F1+idx]=getattr(Key,"F{}".format(idx+1));
         key=mapping.get(sym);
@@ -258,22 +384,39 @@ class GraphicalApplicationBackend:
         return None;
 
     def _overlay_hit(self,x,y):
-        if y<self.height-self.overlay_height: return None;
-        if 8<=x<=86: return "keyboard";
-        if self.width-94<=x<=self.width-8: return "exit";
+        if y<self._content_bottom-self.overlay_height or y>=self._content_bottom: return None;
+        for rect,action in self._accessory_hitboxes:
+            if rect.x<=x<rect.x+rect.w and rect.y<=y<rect.y+rect.h: return action;
         return None;
 
+    def _send_accessory_key(self,key):
+        ctrl,alt=self._consume_latched_modifiers(False,False);
+        event=KeyEvent(key,text="",ctrl=ctrl,alt=alt,shift=False,action="press");
+        handled=bool(self.application.dispatch(event));
+        self.application.dispatch(KeyEvent(key,text="",ctrl=ctrl,alt=alt,shift=False,action="release"));
+        return handled;
+
+    def _activate_overlay(self,action):
+        if action=="exit": self.application.stop(); return True;
+        if action=="keyboard": self._toggle_keyboard(); return True;
+        if action=="ctrl": self._latched_ctrl=not self._latched_ctrl; self._redraw_requested=True; return True;
+        if action=="alt": self._latched_alt=not self._latched_alt; self._redraw_requested=True; return True;
+        if action=="page-fn": self._accessory_page="fn"; self._redraw_requested=True; return True;
+        if action=="page-nav": self._accessory_page="nav"; self._redraw_requested=True; return True;
+        if action: return self._send_accessory_key(action);
+        return False;
+
     def _toggle_keyboard(self):
-        if self.sdl.SDL_IsTextInputActive(): self.sdl.SDL_StopTextInput(); self._keyboard_visible=False;
-        else: self.sdl.SDL_StartTextInput(); self._keyboard_visible=True;
-        self._redraw_requested=True;
+        if self._keyboard_visible:
+            self.sdl.SDL_StopTextInput(); self._keyboard_visible=False;
+        else:
+            self.sdl.SDL_StartTextInput(); self._keyboard_visible=True;
+        self._resize(); self._redraw_requested=True;
 
     def _pointer(self,x,y,action,button="left"):
         hit=self._overlay_hit(x,y);
-        if hit and action=="release":
-            if hit=="exit": self.application.stop(); return True;
-            if hit=="keyboard": self._toggle_keyboard(); return True;
-        if y>=self.height-self.overlay_height: return False;
+        if hit and action=="release": return self._activate_overlay(hit);
+        if y>=self._content_bottom-self.overlay_height: return False;
         gx=max(0,int(x)//self.cell_width); gy=max(0,int(y)//self.cell_height);
         return bool(self.application.dispatch(MouseEvent(gx,gy,button=button,action=action)));
 
@@ -287,7 +430,11 @@ class GraphicalApplicationBackend:
             translated=self._key(event.key,"release"); return bool(translated and self.application.dispatch(translated));
         if event.type==SDL_TEXTINPUT:
             text=bytes(event.text.text).split(b"\0",1)[0].decode("utf-8","replace");
-            return bool(text and self.application.dispatch(KeyEvent(text.lower() if len(text)==1 else "",text=text,action="press")));
+            if not text: return False;
+            if self._latched_ctrl or self._latched_alt:
+                ctrl,alt=self._consume_latched_modifiers(False,False); key=text.lower() if len(text)==1 else text;
+                return bool(self.application.dispatch(KeyEvent(key,text="",ctrl=ctrl,alt=alt,action="press")));
+            return bool(self.application.dispatch(KeyEvent(text.lower() if len(text)==1 else "",text=text,action="press")));
         if event.type==SDL_MOUSEBUTTONDOWN: self._left_down=True; return self._pointer(event.button.x,event.button.y,"press");
         if event.type==SDL_MOUSEBUTTONUP: self._left_down=False; return self._pointer(event.button.x,event.button.y,"release");
         if event.type==SDL_MOUSEMOTION: return self._pointer(event.motion.x,event.motion.y,"move",button="left" if self._left_down else "none");
@@ -310,6 +457,7 @@ class GraphicalApplicationBackend:
             for texture in list(self._texture_cache.values()):
                 try: self.sdl.SDL_DestroyTexture(texture);
                 except Exception: pass;
+            if self.border_font and self.border_font!=self.font: self.ttf.TTF_CloseFont(self.border_font);
             if self.font: self.ttf.TTF_CloseFont(self.font);
             if self.ttf: self.ttf.TTF_Quit();
             if self.renderer: self.sdl.SDL_DestroyRenderer(self.renderer);

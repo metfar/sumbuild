@@ -52,3 +52,26 @@ Buildozer NDK cache, and JDK 17. `build.android` may override `sdk_dir`, `ndk_di
 ## 0.1.0a6 Android runtime correction
 
 The generated Android SUM/SDL2 runtime now follows the experimentally validated p4a path more closely: it loads `libSDL2.so` directly (no `ctypes.util.find_library()`), creates the SDLActivity window fullscreen while preserving SUM logical coordinates, uses the same three-step renderer fallback as the working ctypes diagnostic, and displays a native SDL error dialog if startup raises after SDL2 is loaded.
+
+
+## 0.1.0a7 Android editor readability
+
+- `interface.font_size` is propagated to the Android runtime; the sumedit acceptance project uses 24 px.
+- The SDL2 backend searches Android system fonts at runtime and prefers a fixed-width font plus a glyph-capable fallback for Unicode box-drawing characters.
+- `keyboard.reserve` defaults to `auto` in the sumedit acceptance project. Showing the software keyboard reserves the lower part of the physical display and moves the SUM KEY/EXIT overlay above that reserved area; hiding the keyboard restores the full viewport.
+- Automatic reserve currently uses a conservative portrait/landscape heuristic because the ctypes-only SDL backend intentionally does not depend on pyjnius or the python-for-android `android` recipe.
+
+### Android editor accessory keybar (0.1.0a8)
+
+The `sumedit-android` acceptance project now vendors the pure-Python `sumKeyboard` profile data and uses the `keybar` profile for the Android runtime overlay. The overlay remains visible with or without the system IME.
+
+The normal page is intentionally touch-sized and paginated for portrait displays:
+
+```text
+Esc  Ctrl  Alt  Tab  ←  ↑  ↓  →  FN
+Home End   PgUp PgDn Ins Del KEY EXIT
+```
+
+`FN` switches to a function-key page containing F1-F12 plus `NAV`, `KEY`, and `EXIT`. `Ctrl` and `Alt` are one-shot/latching modifiers: tap a modifier, then tap an accessory key or type the next character with the Android IME. The modifier is consumed after that key event. This lets the normal sumTUI/sumedit key binding dispatcher receive the same `KeyEvent` semantics as a physical keyboard instead of special Android-only editor commands.
+
+`KEY` continues to toggle SDL text input and the software-keyboard reserve. `EXIT` is a runtime overlay action. The application content area remains above both the accessory rows and the reserved IME area.

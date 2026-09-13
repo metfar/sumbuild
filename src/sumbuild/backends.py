@@ -264,7 +264,7 @@ def prepare_android(project, directory=None, backend=None, details=False):
     mode=str(settings.get("mode","debug")).lower();
     arch=str(settings.get("arch","arm64-v8a"));
     requirements=_android_requirements(project);
-    runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"exit_button":project.interface.get("exit_button","auto"),"transpile":stage};
+    runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"font_size":project.interface.get("font_size","auto"),"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto"}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"exit_button":project.interface.get("exit_button","auto"),"transpile":stage};
     (directory / "sum-android.json").write_text(__import__("json").dumps(runtime,indent=2,ensure_ascii=False)+"\n",encoding="utf-8");
     if selected == "p4a":
         command=["p4a","apk","--private",str(directory),"--package={}".format(package),"--name={}".format(project.name),"--version={}".format(project.version),"--bootstrap=sdl2","--requirements={}".format(",".join(requirements)),"--arch={}".format(arch)];

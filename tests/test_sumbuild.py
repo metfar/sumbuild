@@ -15,6 +15,8 @@ def test_project_package_roundtrip(tmp_path):
     assert manifest["project"]["name"] == "demo";
     assert manifest["project"]["build"]["host"]["backend"] == "auto";
     assert manifest["project"]["interface"]["keyboard"]["show_hide"] is True;
+    assert manifest["project"]["interface"]["keyboard"]["reserve"] == "auto";
+    assert manifest["project"]["interface"]["font_size"] == "auto";
     restored=disassemble_package(package,tmp_path / "restored");
     assert (restored / "project.sum").exists();
     assert (restored / "main.py").read_text(encoding="utf-8") == 'print("demo")\n';
@@ -54,6 +56,7 @@ def test_prepare_android(tmp_path):
     runtime=(staging / "sum-android.json").read_text(encoding="utf-8");
     assert "package.domain = org.sumecosystem" in spec;
     assert '"show_hide": true' in runtime.lower();
+    assert '"font_size": "auto"' in runtime.lower();
     assert command[:2] == ["buildozer","android"];
 
 

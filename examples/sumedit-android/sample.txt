@@ -5,6 +5,8 @@ Este archivo viene dentro del APK para la primera prueba compleja.
 Pruebas sugeridas:
 - tocar el editor y mover el cursor;
 - usar KEY para mostrar/ocultar el teclado;
+- usar Esc/Ctrl/Alt/Tab y cursores de la barra SUM;
+- tocar FN para ver Home/End/PgUp/PgDn/Ins/Del y F1-F12;
 - escribir texto y Unicode;
 - abrir menus;
 - girar portrait / landscape;

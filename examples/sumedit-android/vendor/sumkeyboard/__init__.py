@@ -19,5 +19,9 @@
 #  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 #  MA 02110-1301, USA.
 #  
-"""SUM project/build orchestration.""";
-__version__="0.1.0a8";
+"""Portable SUM keyboard layouts.""";
+__version__="0.1.0a1";
+from .model import KeyDefinition, KeyboardLayout;
+from .profiles import PROFILES, get_profile;
+from .xmodmap import load_reference_layout, parse_xmodmap, parse_xmodmap_text;
+__all__=["__version__","KeyDefinition","KeyboardLayout","PROFILES","get_profile","parse_xmodmap","parse_xmodmap_text","load_reference_layout"];
