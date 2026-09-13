@@ -20,3 +20,23 @@ The build layer never installs toolchains automatically. Missing optional builde
 Current executable backends build Python entrypoints. sumBASIC, sumX and sumR runtime adapters remain intentionally above the same project/container contract.
 
 <p align=center><b>- oOo -</b></p>
+
+## 0.1.0a3 Android / SumGUI experiment
+
+`sumBuild` can now stage an Android build with `python-for-android` (`p4a`) and a first source-lowering pass for the declarative `sumgui.easy` subset. The desktop source is preserved as `main.desktop.py`; generated Android `main.py` uses the validated direct SDL2/ctypes path and does not depend on PySDL2.
+
+The bundled `examples/sumgui-button/` is copied unchanged from the SumGUI Button component example and is configured with `project.sum` for the first test:
+
+```bash
+sumbuild build examples/sumgui-button/project.sum --target android --backend p4a --prepare
+sumbuild build examples/sumgui-button/project.sum --target android --backend p4a
+```
+
+Current `sumgui-easy` lowering supports `window()`, `label()/say()`, `button()` with a literal `alert()` callback, and `start()`. This is intentionally the first compiler slice, not yet a claim that every SumGUI example can be lowered. Unsupported widgets will be added incrementally.
+
+Runtime conventions in the generated SDL2 application:
+
+- `F10`: exit on desktop;
+- `Alt+Enter`: toggle window/fullscreen;
+- `Esc`: left to the application;
+- orientation defaults to `auto`; explicit `portrait`/`landscape` are emitted only when requested.

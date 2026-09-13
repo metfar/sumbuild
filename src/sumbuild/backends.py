@@ -25,6 +25,7 @@ import shutil;
 import subprocess;
 import sys;
 from .project import SumProject;
+from .transpile import TranspileError, transpile_sumgui_easy;
 
 
 class BuildError(RuntimeError):
@@ -73,7 +74,7 @@ def prepare_host(project, directory=None, backend=None):
     console=bool(project.build.get("console", True));
     if backend == "nuitka":
         command=["nuitka","--onefile","--assume-yes-for-downloads","--output-dir={}".format(dist),"--output-filename={}".format(project.name),str(entry)];
-        if not console: command.insert(2,"--windows-console-mode=disable");
+        if not console and sys.platform.startswith("win"): command.insert(2,"--windows-console-mode=disable");
     else:
         command=["pyinstaller","--noconfirm","--clean","--onefile","--name",project.name,"--distpath",str(dist),"--workpath",str(directory / ".pyinstaller"),"--specpath",str(directory)];
         if not console: command.append("--noconsole");
@@ -113,40 +114,103 @@ def build_host(project, prepare_only=False, backend=None):
 
 def _android_requirements(project):
     android=project.build.get("android", {});
-    values=android.get("requirements", ["python3"]);
+    values=android.get("requirements", ["python3","sdl2"]);
     if not isinstance(values, list) or not values: raise BuildError("build.android.requirements must be a non-empty list");
     return [str(item) for item in values];
 
 
-def prepare_android(project, directory=None):
-    project=project if isinstance(project, SumProject) else SumProject.load(project);
-    if project.language != "python": raise BuildError("Android backend currently supports language=python; SUM runtime adapters come next");
-    directory=Path(directory or (project.root / "build" / "android")).resolve();
-    if directory.exists(): shutil.rmtree(str(directory));
+def _android_settings(project):
+    value=project.build.get("android", {});
+    if value is None: value={};
+    if not isinstance(value, dict): raise BuildError("build.android must be an object");
+    return value;
+
+
+def select_android_backend(project, requested="auto"):
+    settings=_android_settings(project);
+    requested=str(requested or settings.get("backend","auto")).strip().lower();
+    if requested not in ("auto","p4a","buildozer"): raise BuildError("android backend expects auto, p4a, or buildozer");
+    if requested != "auto": return requested;
+    if shutil.which("p4a"): return "p4a";
+    if shutil.which("buildozer"): return "buildozer";
+    return "p4a";
+
+
+def _stage_android(project, directory):
     _copy_payload(project, directory);
+    entry=directory / project.entrypoint;
+    if not entry.exists(): raise BuildError("entrypoint not staged: {}".format(project.entrypoint));
+    settings=_android_settings(project);
+    mode=str(settings.get("transpile","")).strip().lower();
+    backend=str(project.interface.get("backend","")).strip().lower();
+    should_transpile=(mode == "sumgui-easy") or (mode in ("auto","true","1") and backend == "sumgui");
+    if should_transpile:
+        original=directory / "main.desktop.py";
+        shutil.copy2(str(entry),str(original));
+        try: model=transpile_sumgui_easy(original,directory / "main.py");
+        except TranspileError as exc: raise BuildError(str(exc));
+        return {"transpiled":True,"transpiler":"sumgui-easy","source":str(original),"model":model};
     if project.entrypoint != "main.py":
         wrapper='import runpy;\nrunpy.run_path({!r}, run_name="__main__");\n'.format(project.entrypoint);
-        (directory / "main.py").write_text(wrapper, encoding="utf-8");
-    android=project.build.get("android", {});
-    package_name=str(android.get("package_name", project.name.lower().replace("_", "").replace("-", ""))) or "sumapp";
-    domain=str(android.get("package_domain", "org.sumecosystem"));
-    orientation=str(android.get("orientation", "all"));
-    fullscreen="1" if bool(android.get("fullscreen", False)) else "0";
-    spec="""[app]\ntitle = {title}\npackage.name = {package}\npackage.domain = {domain}\nsource.dir = .\nsource.include_exts = py,png,jpg,jpeg,gif,svg,json,txt,md,csv,rds,sum,bas,prg,R,yaml,yml\nversion = {version}\nrequirements = {requirements}\norientation = {orientation}\nfullscreen = {fullscreen}\n\n[buildozer]\nlog_level = 2\nwarn_on_root = 1\n""".format(title=project.name,package=package_name,domain=domain,version=project.version,requirements=",".join(_android_requirements(project)),orientation=orientation,fullscreen=fullscreen);
-    (directory / "buildozer.spec").write_text(spec, encoding="utf-8");
-    runtime={"screen":project.interface.get("screen", "auto"),"keyboard":project.interface.get("keyboard", {"system":True,"accessory":"auto","show_hide":True})};
-    (directory / "sum-android.json").write_text(__import__("json").dumps(runtime,indent=2,ensure_ascii=False) + "\n",encoding="utf-8");
-    command=["buildozer","android",str(android.get("mode", "debug"))];
-    return directory, command;
+        (directory / "main.py").write_text(wrapper,encoding="utf-8");
+    return {"transpiled":False,"transpiler":None,"source":str(entry)};
 
 
-def build_android(project, prepare_only=False):
+def _orientation(project):
+    value=str(project.interface.get("orientation",_android_settings(project).get("orientation","auto"))).strip().lower();
+    if value not in ("auto","portrait","landscape","sensor"): raise BuildError("interface.orientation expects auto, portrait, landscape, or sensor");
+    return value;
+
+
+def prepare_android(project, directory=None, backend=None, details=False):
     project=project if isinstance(project, SumProject) else SumProject.load(project);
-    directory, command=prepare_android(project);
-    if prepare_only: return {"staging":str(directory),"backend":"buildozer","command":command,"artifact":None};
-    if not shutil.which("buildozer"): raise BuildError("Buildozer not found; run sumbuild --doctor or use --prepare");
-    subprocess.run(command, cwd=str(directory), check=True);
-    apks=sorted((directory / "bin").glob("*.apk"), key=lambda item:item.stat().st_mtime, reverse=True);
-    if not apks: raise BuildError("Buildozer finished but no APK was found in bin/");
-    dist=project.root / "dist"; dist.mkdir(parents=True, exist_ok=True); target=dist / apks[0].name; shutil.copy2(str(apks[0]), str(target));
-    return {"staging":str(directory),"backend":"buildozer","command":command,"artifact":str(target)};
+    if project.language != "python": raise BuildError("Android backend currently supports language=python; SUM runtime adapters come next");
+    selected=select_android_backend(project,backend);
+    directory=Path(directory or (project.root / "build" / "android" / selected)).resolve();
+    if directory.exists(): shutil.rmtree(str(directory));
+    directory.mkdir(parents=True,exist_ok=True);
+    stage=_stage_android(project,directory);
+    settings=_android_settings(project);
+    package_name=str(settings.get("package_name",project.name.lower().replace("_","").replace("-",""))) or "sumapp";
+    domain=str(settings.get("package_domain","org.sumecosystem"));
+    package="{}.{}".format(domain,package_name);
+    orientation=_orientation(project);
+    mode=str(settings.get("mode","debug")).lower();
+    arch=str(settings.get("arch","arm64-v8a"));
+    requirements=_android_requirements(project);
+    runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"transpile":stage};
+    (directory / "sum-android.json").write_text(__import__("json").dumps(runtime,indent=2,ensure_ascii=False)+"\n",encoding="utf-8");
+    if selected == "p4a":
+        command=["p4a","apk","--private",str(directory),"--package={}".format(package),"--name={}".format(project.name),"--version={}".format(project.version),"--bootstrap=sdl2","--requirements={}".format(",".join(requirements)),"--arch={}".format(arch)];
+        if mode == "debug": command.append("--debug");
+        if orientation != "auto": command.append("--orientation={}".format(orientation));
+        result=(directory,command,selected,stage);
+        return result if details else result[:2];
+    spec="""[app]\ntitle = {title}\npackage.name = {package_name}\npackage.domain = {domain}\nsource.dir = .\nsource.include_exts = py,png,jpg,jpeg,gif,svg,json,txt,md,csv,rds,sum,bas,prg,R,yaml,yml\nversion = {version}\nrequirements = {requirements}\nfullscreen = 0\n\n[buildozer]\nlog_level = 2\nwarn_on_root = 1\n""".format(title=project.name,package_name=package_name,domain=domain,version=project.version,requirements=",".join(requirements));
+    if orientation != "auto": spec=spec.replace("fullscreen = 0","orientation = {}\nfullscreen = 0".format(orientation));
+    (directory / "buildozer.spec").write_text(spec,encoding="utf-8");
+    result=(directory,["buildozer","android",mode],selected,stage);
+    return result if details else result[:2];
+
+
+def _find_android_apk(directory, selected):
+    directory=Path(directory);
+    candidates=[];
+    if selected == "buildozer": candidates.extend((directory / "bin").glob("*.apk"));
+    candidates.extend(directory.glob("*.apk"));
+    return sorted(candidates,key=lambda item:item.stat().st_mtime,reverse=True)[0] if candidates else None;
+
+
+def build_android(project, prepare_only=False, backend=None):
+    project=project if isinstance(project, SumProject) else SumProject.load(project);
+    directory,command,selected,stage=prepare_android(project,backend=backend,details=True);
+    if prepare_only: return {"staging":str(directory),"backend":selected,"transpile":stage,"command":command,"artifact":None};
+    executable=command[0];
+    if not shutil.which(executable): raise BuildError("{} not found; run sumbuild --doctor or use --prepare".format(executable));
+    subprocess.run(command,cwd=str(directory),check=True);
+    apk=_find_android_apk(directory,selected);
+    if apk is None: raise BuildError("{} finished but no APK was found in staging".format(selected));
+    dist=project.root / "dist"; dist.mkdir(parents=True,exist_ok=True);
+    target=dist / "{}-{}-{}.apk".format(project.name,project.version,"debug" if str(_android_settings(project).get("mode","debug")) == "debug" else "release");
+    shutil.copy2(str(apk),str(target));
+    return {"staging":str(directory),"backend":selected,"transpile":stage,"command":command,"artifact":str(target)};

@@ -49,9 +49,28 @@ def test_auto_backend_prefers_nuitka(monkeypatch):
 def test_prepare_android(tmp_path):
     root=tmp_path / "demo"; project=SumProject.create(root,"demo");
     (root / "main.py").write_text("print(1)\n",encoding="utf-8");
-    staging, command=prepare_android(project);
+    staging, command=prepare_android(project,backend="buildozer");
     spec=(staging / "buildozer.spec").read_text(encoding="utf-8");
     runtime=(staging / "sum-android.json").read_text(encoding="utf-8");
     assert "package.domain = org.sumecosystem" in spec;
     assert '"show_hide": true' in runtime.lower();
     assert command[:2] == ["buildozer","android"];
+
+
+def test_sumgui_easy_android_transpile(tmp_path):
+    import json;
+    from sumbuild.backends import prepare_android;
+    project=tmp_path / "project.sum";
+    source=tmp_path / "main.py";
+    source.write_text('from sumgui.easy import label, button, alert, start, window;\nwindow("Demo", width=640, height=360, base_width=640, base_height=360);\nlabel("READY", 10, 10, 200, 30);\nbutton("PRESS", 10, 60, 160, 50, do=lambda: alert("OK", "TEST"));\nstart();\n',encoding="utf-8");
+    project.write_text(json.dumps({"sum_project":1,"name":"demo","version":"0.1.0","language":"python","entrypoint":"main.py","sources":["main.py"],"resources":[],"dependencies":["sumgui"],"interface":{"backend":"sumgui","orientation":"auto"},"build":{"android":{"backend":"p4a","transpile":"sumgui-easy","requirements":["python3","sdl2"]}}}),encoding="utf-8");
+    directory,command,backend,stage=prepare_android(project,backend="p4a",details=True);
+    assert backend == "p4a";
+    assert stage["transpiled"] is True;
+    assert (directory / "main.desktop.py").exists();
+    generated=(directory / "main.py").read_text(encoding="utf-8");
+    assert "ctypes.CDLL" in generated;
+    assert "SDLK_F10" in generated;
+    assert "SDL_SetWindowFullscreen" in generated;
+    assert "--requirements=python3,sdl2" in command;
+    assert not any(item.startswith("--orientation=") for item in command);

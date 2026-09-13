@@ -20,4 +20,4 @@
 #  MA 02110-1301, USA.
 #  
 """SUM project/build orchestration.""";
-__version__="0.1.0a2";
+__version__="0.1.0a3";

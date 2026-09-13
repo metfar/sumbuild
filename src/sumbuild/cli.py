@@ -44,7 +44,7 @@ def _parser():
     verify=sub.add_parser("verify",help="verify package checksums"); verify.add_argument("package");
     unpack=sub.add_parser("unpack",help="extract package representation"); unpack.add_argument("package"); unpack.add_argument("-d","--directory",required=True);
     disassemble=sub.add_parser("disassemble",help="reconstruct a SUM project"); disassemble.add_argument("package"); disassemble.add_argument("-d","--directory",required=True);
-    build=sub.add_parser("build",help="build host executable or Android APK"); build.add_argument("project",nargs="?",default="."); build.add_argument("--target",choices=("host","android"),default="host"); build.add_argument("--backend",choices=("auto","nuitka","pyinstaller"),default=None,help="host backend; ignored for Android"); build.add_argument("--prepare",action="store_true",help="prepare staging/tool command without invoking external builder");
+    build=sub.add_parser("build",help="build host executable or Android APK"); build.add_argument("project",nargs="?",default="."); build.add_argument("--target",choices=("host","linux","windows","macos","android"),default="host"); build.add_argument("--backend",default=None,help="backend: host auto/nuitka/pyinstaller; android auto/p4a/buildozer"); build.add_argument("--prepare",action="store_true",help="prepare staging/tool command without invoking external builder");
     return parser;
 
 
@@ -77,7 +77,10 @@ def main(argv=None):
         if args.command == "unpack": print(unpack_package(args.package,args.directory)); return 0;
         if args.command == "disassemble": print(disassemble_package(args.package,args.directory)); return 0;
         if args.command == "build":
-            result=build_host(args.project,args.prepare,args.backend) if args.target == "host" else build_android(args.project,args.prepare);
+            if args.target in ("host","linux","windows","macos"):
+                if args.target != "host" and not sys.platform.startswith({"linux":"linux","windows":"win","macos":"darwin"}[args.target]): raise BuildError("explicit cross-platform host compilation is not implemented yet; use target=host on the target OS")
+                result=build_host(args.project,args.prepare,args.backend)
+            else: result=build_android(args.project,args.prepare,args.backend);
             print(json.dumps(result,indent=2)); return 0;
     except (ProjectError,BuildError,OSError,ValueError) as exc:
         print("sumbuild: {}".format(exc),file=sys.stderr); return 2;
