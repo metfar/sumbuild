@@ -27,7 +27,9 @@
       "profile": "keybar",
       "show_hide": true,
       "reserve": "auto",
-      "accessory_button_height": 92
+      "accessory_button_height": 92,
+      "accessory_arrow_style": "spectrum",
+      "accessory_bold": true
     },
     "shortcuts": {
       "exit": "F10",

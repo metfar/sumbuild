@@ -299,13 +299,15 @@ class GraphicalApplicationBackend:
         if not texture: return None;
         self._texture_cache[key]=texture; return texture;
 
-    def _draw_text_cell(self,char,col,row,fg,bg,underline=False,strike=False):
+    def _draw_text_cell(self,char,col,row,fg,bg,underline=False,strike=False,bold=False):
         x=col*self.cell_width; y=row*self.cell_height; cells=max(1,get_character_cell_size(char)); width=max(self.cell_width,cells*self.cell_width);
         self._fill(x,y,width,self.cell_height,bg);
         if char!=" ":
             tex=self._glyph(char,fg);
             if tex:
                 dst=SDL_Rect(x,y,width,self.cell_height); self.sdl.SDL_RenderCopy(self.renderer,tex,None,ctypes.byref(dst));
+                if bold and width>2:
+                    bold_dst=SDL_Rect(x+1,y,width,self.cell_height); self.sdl.SDL_RenderCopy(self.renderer,tex,None,ctypes.byref(bold_dst));
         if underline:
             self.sdl.SDL_SetRenderDrawColor(self.renderer,*fg,255); self.sdl.SDL_RenderDrawLine(self.renderer,x,y+self.cell_height-2,x+width-1,y+self.cell_height-2);
         if strike:
@@ -329,14 +331,38 @@ class GraphicalApplicationBackend:
             [("Home",Key.HOME),("End",Key.END),("PgUp",Key.PAGE_UP),("PgDn",Key.PAGE_DOWN),("Ins",Key.INSERT),("Del",Key.DELETE),("KEY","keyboard"),("EXIT","exit")],
         ];
 
+    def _draw_spectrum_arrow(self,direction,rect,color=(250,250,250)):
+        # Do not depend on a font glyph for navigation arrows. The Android
+        # system monospace font may contain very light arrow characters, making
+        # them almost invisible on a touch key. Draw the ZX-style arrow as
+        # solid SDL geometry instead so its weight scales with the key itself.
+        cx=rect.x+rect.w//2; cy=rect.y+rect.h//2;
+        unit=max(3,min(rect.w,rect.h)//12);
+        shaft=max(unit*2,6); length=max(unit*5,min(rect.w,rect.h)//3); head=max(unit*4,10);
+        if direction in (Key.LEFT,Key.RIGHT):
+            self._fill(cx-length//2,cy-shaft//2,length,shaft,color);
+            sign=-1 if direction==Key.LEFT else 1; tip=cx+sign*(length//2+head//2);
+            for i in range(head):
+                span=max(1,head-i);
+                x=tip-sign*i; self._fill(x,cy-span//2,1,span,color);
+        else:
+            self._fill(cx-shaft//2,cy-length//2,shaft,length,color);
+            sign=-1 if direction==Key.UP else 1; tip=cy+sign*(length//2+head//2);
+            for i in range(head):
+                span=max(1,head-i);
+                y=tip-sign*i; self._fill(cx-span//2,y,span,1,color);
+
     def _draw_overlay_button(self,label,action,rect,active=False):
         bg=(58,74,82) if active else (26,26,32);
         self._fill(rect.x,rect.y,rect.w,rect.h,bg);
         self.sdl.SDL_SetRenderDrawColor(self.renderer,190,195,205,255); self.sdl.SDL_RenderDrawRect(self.renderer,ctypes.byref(rect));
-        text=str(label); cells=sum(max(1,get_character_cell_size(ch)) for ch in text);
-        col=max(0,(rect.x + max(4,(rect.w-cells*self.cell_width)//2))//self.cell_width);
-        row=max(0,(rect.y + max(2,(rect.h-self.cell_height)//2))//self.cell_height);
-        for ch in text: col+=self._draw_text_cell(ch,col,row,(245,245,248),bg);
+        if action in (Key.LEFT,Key.UP,Key.DOWN,Key.RIGHT):
+            self._draw_spectrum_arrow(action,rect);
+        else:
+            text=str(label); cells=sum(max(1,get_character_cell_size(ch)) for ch in text);
+            col=max(0,(rect.x + max(4,(rect.w-cells*self.cell_width)//2))//self.cell_width);
+            row=max(0,(rect.y + max(2,(rect.h-self.cell_height)//2))//self.cell_height);
+            for ch in text: col+=self._draw_text_cell(ch,col,row,(245,245,248),bg,bold=True);
         self._accessory_hitboxes.append((rect,action));
 
     def _overlay(self):
@@ -361,12 +387,12 @@ class GraphicalApplicationBackend:
                 text=str(getattr(segment,"text","")); style=getattr(segment,"style",None);
                 fg=_triplet(getattr(style,"color",None),default_fg); bg=_triplet(getattr(style,"bgcolor",None),default_bg);
                 if bool(getattr(style,"reverse",False)): fg,bg=bg,fg;
-                underline=bool(getattr(style,"underline",False)); strike=bool(getattr(style,"strike",False));
+                underline=bool(getattr(style,"underline",False)); strike=bool(getattr(style,"strike",False)); bold=bool(getattr(style,"bold",False));
                 for char in text:
                     if col>=self.columns: break;
                     cells=get_character_cell_size(char);
                     if cells<=0: continue;
-                    col+=self._draw_text_cell(char,col,row,fg,bg,underline,strike);
+                    col+=self._draw_text_cell(char,col,row,fg,bg,underline,strike,bold);
                 if col>=self.columns: break;
         self._overlay(); self.sdl.SDL_RenderPresent(self.renderer); self._redraw_requested=False;
 
