@@ -43,7 +43,7 @@ SUM_ANDROID_ECOSYSTEM_PACKAGES=(
 );
 
 SUM_ANDROID_CORE_REQUIREMENTS=(
-    "python3","sdl2","rich","pygments","markdown-it-py","mdurl","Markdown","markdownify",
+    "python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify",
 );
 
 
@@ -127,11 +127,32 @@ def build_host(project, prepare_only=False, backend=None):
     return {"staging":str(directory),"backend":selected,"command":command,"artifact":str(raw)};
 
 
+def _canonical_android_requirement(value):
+    """Canonicalize the distribution name portion for p4a's case-sensitive matcher.""";
+    text=str(value).strip();
+    if not text: return text;
+    lower=text.lower();
+    if lower.startswith(("http://","https://","git+","file:")): return text;
+    stop=len(text);
+    for marker in ("[","=","<",">","!","~","@",";"):
+        pos=text.find(marker);
+        if pos >= 0: stop=min(stop,pos);
+    name=text[:stop];
+    suffix=text[stop:];
+    canonical=name.lower().replace("_","-").replace(".","-");
+    while "--" in canonical: canonical=canonical.replace("--","-");
+    return canonical + suffix;
+
+
 def _android_requirements(project):
     android=project.build.get("android", {});
     values=android.get("requirements", ["python3","sdl2"]);
     if not isinstance(values, list) or not values: raise BuildError("build.android.requirements must be a non-empty list");
-    return [str(item) for item in values];
+    result=[];
+    for item in values:
+        text=_canonical_android_requirement(item);
+        if text and text not in result: result.append(text);
+    return result;
 
 
 def _android_permissions(project):
@@ -544,19 +565,24 @@ def _find_android_apk(directory, selected):
 
 
 
-def _repair_p4a_transient_venv(env):
-    """Remove only p4a's disposable build venv when its pip installation is broken.""";
+def _reset_p4a_transient_venv(env=None):
+    """Remove p4a's disposable pip/Cython venv before each build.
+
+    python-for-android recreates this directory itself.  Reusing it across
+    Python/pip upgrades can leave executable scripts and pip internals from
+    different versions mixed together, so a successful ``pip --version``
+    probe is not strong enough to prove the environment is reusable.
+    """;
+    _=env;
     base=Path.home() / ".local" / "share" / "python-for-android" / "build" / "venv";
-    python=base / "bin" / "python";
-    if not python.exists(): return {"checked":False,"repaired":False,"path":str(base)};
-    try:
-        probe=subprocess.run([str(python),"-m","pip","--version"],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=20,env=env,check=False);
-    except (OSError,subprocess.SubprocessError):
-        probe=None;
-    if probe is not None and probe.returncode == 0:
-        return {"checked":True,"repaired":False,"path":str(base)};
-    shutil.rmtree(str(base),ignore_errors=True);
-    return {"checked":True,"repaired":True,"path":str(base)};
+    existed=base.exists();
+    if existed: shutil.rmtree(str(base),ignore_errors=True);
+    return {"checked":True,"repaired":existed,"reset":existed,"path":str(base)};
+
+
+# Compatibility name for callers/tests from a19.
+def _repair_p4a_transient_venv(env):
+    return _reset_p4a_transient_venv(env);
 
 def build_android(project, prepare_only=False, backend=None):
     project=project if isinstance(project, SumProject) else SumProject.load(project);
@@ -567,8 +593,8 @@ def build_android(project, prepare_only=False, backend=None):
     if not shutil.which(executable): raise BuildError("{} not found; run sumbuild --doctor or use --prepare".format(executable));
     p4a_venv=None;
     if selected == "p4a":
-        p4a_venv=_repair_p4a_transient_venv(env);
-        if p4a_venv.get("repaired"): print("[WARN] repaired broken python-for-android transient pip environment: {}".format(p4a_venv["path"]),file=sys.stderr);
+        p4a_venv=_reset_p4a_transient_venv(env);
+        if p4a_venv.get("reset"): print("[INFO] reset python-for-android transient pip environment: {}".format(p4a_venv["path"]),file=sys.stderr);
     try: subprocess.run(command,cwd=str(directory),check=True,env=env);
     except subprocess.CalledProcessError as exc:
         raise BuildError("{} build failed with exit status {}".format(selected,exc.returncode)) from exc;

@@ -155,9 +155,9 @@ def project_from_main(path,name=None,target="host",backend=None,storage="auto"):
     if storage == "auto": storage="all-files" if profile in ("sumide","sumbasic","sumx","sumr") else "scoped";
     runtime_requirements={
         "python":["python3","sdl2"],
-        "sumbasic":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","Markdown","markdownify"],
-        "sumx":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","Markdown","markdownify"],
-        "sumr":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","Markdown","markdownify"],
+        "sumbasic":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify"],
+        "sumx":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify"],
+        "sumr":["python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify"],
     };
     data={
         "sum_project":PROJECT_FORMAT,

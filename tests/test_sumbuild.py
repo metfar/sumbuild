@@ -203,3 +203,27 @@ def test_project_build_overrides(tmp_path):
     project=_project_with_build_overrides(manifest,"sumide","auto");
     assert project.name == "sumide";
     assert project.build["android"]["storage_access"] == "all-files";
+
+
+def test_android_requirements_are_canonical_for_p4a(tmp_path):
+    import json;
+    from sumbuild.backends import prepare_android;
+    main=tmp_path/"main.py"; main.write_text("print(1)\n",encoding="utf-8");
+    manifest=tmp_path/"project.sum";
+    manifest.write_text(json.dumps({"sum_project":1,"name":"demo","entrypoint":"main.py","sources":["main.py"],"build":{"android":{"backend":"p4a","requirements":["python3","sdl2","Markdown","markdown_it_py"]}}}),encoding="utf-8");
+    _,command=prepare_android(manifest,backend="p4a");
+    req=next(item for item in command if item.startswith("--requirements="));
+    assert "Markdown" not in req;
+    assert "markdown" in req.split("=",1)[1].split(",");
+    assert "markdown-it-py" in req.split("=",1)[1].split(",");
+
+
+def test_p4a_transient_venv_is_always_reset(tmp_path,monkeypatch):
+    import sumbuild.backends as backends;
+    fake_home=tmp_path/"home";
+    venv=fake_home/".local/share/python-for-android/build/venv";
+    venv.mkdir(parents=True); (venv/"sentinel").write_text("old",encoding="utf-8");
+    monkeypatch.setattr(backends.Path,"home",classmethod(lambda cls: fake_home));
+    status=backends._reset_p4a_transient_venv({});
+    assert status["reset"] is True;
+    assert not venv.exists();

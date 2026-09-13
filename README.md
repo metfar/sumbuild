@@ -146,3 +146,8 @@ Pygame directly remain a separate migration target.
 ## 0.1.0a19 SDL2 runtime direction
 
 Android graphical applications use the SUM SDL2/ctypes path. The runtime now provides native SDL2 clipboard access and a minimal queued-audio sink, and the sumIDE Android example uses the full SUM runtime bundle (excluding sumBuild). Responsive text layout prefers 72 columns with a 40-column floor and targets at least 15 visible rows with the IME present.
+
+
+## 0.1.0a20 p4a robustness
+
+See `README-a20.md` for requirement canonicalization and transient p4a venv reset behavior.
