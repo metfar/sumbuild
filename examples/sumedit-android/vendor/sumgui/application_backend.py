@@ -217,10 +217,21 @@ class GraphicalApplicationBackend:
         self.application=application;
         self.title=str(title or getattr(application,"title","SUM application"));
         self.runtime=_runtime_config();
-        configured=self.runtime.get("font_size",24) if font_size is None else font_size;
+        configured=self.runtime.get("font_size","auto") if font_size is None else font_size;
+        self.font_auto=str(configured).strip().lower() in ("auto","responsive","screen");
         try: configured=int(configured);
         except (TypeError,ValueError): configured=24;
         self.font_size=max(18,configured); self.fps=max(10,int(fps));
+        auto_cfg=self.runtime.get("font_auto",{});
+        if not isinstance(auto_cfg,dict): auto_cfg={};
+        try: self.font_auto_portrait_columns=max(28,int(auto_cfg.get("portrait_columns",48)));
+        except (TypeError,ValueError): self.font_auto_portrait_columns=48;
+        try: self.font_auto_landscape_columns=max(40,int(auto_cfg.get("landscape_columns",80)));
+        except (TypeError,ValueError): self.font_auto_landscape_columns=80;
+        try: self.font_auto_min_px=max(16,int(auto_cfg.get("min_px",22)));
+        except (TypeError,ValueError): self.font_auto_min_px=22;
+        try: self.font_auto_max_px=max(self.font_auto_min_px,int(auto_cfg.get("max_px",64)));
+        except (TypeError,ValueError): self.font_auto_max_px=64;
         self.sdl=None; self.ttf=None; self.window=None; self.renderer=None; self.font=None; self.border_font=None;
         self.font_path=None; self.border_font_path=None;
         self.cell_width=10; self.cell_height=20; self.columns=80; self.rows=24;
@@ -232,17 +243,77 @@ class GraphicalApplicationBackend:
         self.keyboard_accessory=keyboard.get("accessory","auto") if isinstance(keyboard,dict) else "auto";
         self.keyboard_profile=keyboard.get("profile","keybar") if isinstance(keyboard,dict) else "keybar";
         raw_button_height=keyboard.get("accessory_button_height","auto") if isinstance(keyboard,dict) else "auto";
+        self.accessory_button_height_auto=str(raw_button_height).strip().lower() in ("auto","responsive","font");
         try: self.accessory_button_height=max(56,int(raw_button_height));
         except (TypeError,ValueError): self.accessory_button_height=92;
         self._accessory_page="nav"; self._latched_ctrl=False; self._latched_alt=False;
+        repeat=keyboard.get("repeat",{}) if isinstance(keyboard,dict) else {};
+        if not isinstance(repeat,dict): repeat={};
+        self.accessory_repeat_enabled=bool(repeat.get("enabled",True));
+        try: self.accessory_repeat_delay_ms=max(120,int(repeat.get("delay_ms",400)));
+        except (TypeError,ValueError): self.accessory_repeat_delay_ms=400;
+        try: self.accessory_repeat_interval_ms=max(25,int(repeat.get("interval_ms",55)));
+        except (TypeError,ValueError): self.accessory_repeat_interval_ms=55;
         self._accessory_hitboxes=[]; self._content_bottom=self.height-self.overlay_height;
+        self._held_accessory=None; self._held_accessory_mods=(False,False,False); self._held_accessory_next=0.0;
         self._accessory_profile=None;
         if get_profile is not None:
             try: self._accessory_profile=get_profile(self.keyboard_profile if self.keyboard_profile not in (None,"auto",True) else "keybar");
             except Exception: self._accessory_profile=None;
 
     def request_redraw(self): self._redraw_requested=True; return True;
-    def set_key_repeat(self,*_args,**_kwargs): return (0,0);
+    def set_key_repeat(self,delay=None,interval=None):
+        if delay is not None:
+            try: self.accessory_repeat_delay_ms=max(120,int(delay));
+            except (TypeError,ValueError): pass;
+        if interval is not None:
+            try: self.accessory_repeat_interval_ms=max(25,int(interval));
+            except (TypeError,ValueError): pass;
+        return (self.accessory_repeat_delay_ms,self.accessory_repeat_interval_ms);
+
+    def _target_columns(self):
+        return self.font_auto_portrait_columns if self.height>=self.width else self.font_auto_landscape_columns;
+
+    def _auto_font_size(self):
+        target=max(1,self._target_columns());
+        # A normal monospace glyph is about 0.60 em wide.  Start there, then
+        # refine once using the actual font metrics so the terminal width is
+        # stable across Android phones, tablets and font families.
+        estimated=round(self.width/(target*0.60));
+        return max(self.font_auto_min_px,min(self.font_auto_max_px,int(estimated)));
+
+    def _clear_texture_cache(self):
+        if self.sdl:
+            for texture in list(self._texture_cache.values()):
+                try: self.sdl.SDL_DestroyTexture(texture);
+                except Exception: pass;
+        self._texture_cache.clear();
+
+    def _close_fonts(self):
+        self._clear_texture_cache();
+        if self.ttf and self.border_font and self.border_font!=self.font:
+            try: self.ttf.TTF_CloseFont(self.border_font);
+            except Exception: pass;
+        if self.ttf and self.font:
+            try: self.ttf.TTF_CloseFont(self.font);
+            except Exception: pass;
+        self.font=None; self.border_font=None; self.font_path=None; self.border_font_path=None;
+
+    def _load_fonts(self,size,refine=False):
+        size=max(self.font_auto_min_px,min(self.font_auto_max_px,int(size))) if self.font_auto else max(18,int(size));
+        if self.font and size==self.font_size and not refine: return False;
+        self._close_fonts(); self.font_size=size;
+        self.font,self.font_path,self.border_font,self.border_font_path=_choose_fonts(self.ttf,self.font_size);
+        w=ctypes.c_int(); h=ctypes.c_int(); self.ttf.TTF_SizeUTF8(self.font,b"M",ctypes.byref(w),ctypes.byref(h));
+        self.cell_width=max(7,int(w.value)); self.cell_height=max(12,int(h.value)+3);
+        if self.font_auto and refine:
+            target=max(1,self._target_columns()); desired=max(1.0,self.width/target);
+            corrected=round(self.font_size*(desired/max(1,self.cell_width)));
+            corrected=max(self.font_auto_min_px,min(self.font_auto_max_px,int(corrected)));
+            if abs(corrected-self.font_size)>=2: return self._load_fonts(corrected,False) or True;
+        if self.accessory_button_height_auto: self.accessory_button_height=max(72,int(round(self.font_size*3.8)));
+        self.overlay_height=max(112,self.accessory_button_height*2+22);
+        return True;
 
     def _open(self):
         self.sdl=ctypes.CDLL("libSDL2.so"); self.ttf=ctypes.CDLL("libSDL2_ttf.so"); _bind_sdl(self.sdl); _bind_ttf(self.ttf);
@@ -254,10 +325,9 @@ class GraphicalApplicationBackend:
         if not self.renderer: self.renderer=self.sdl.SDL_CreateRenderer(self.window,-1,SDL_RENDERER_ACCELERATED);
         if not self.renderer: self.renderer=self.sdl.SDL_CreateRenderer(self.window,-1,SDL_RENDERER_SOFTWARE);
         if not self.renderer: raise RuntimeError("SDL_CreateRenderer: "+self.sdl.SDL_GetError().decode("utf-8","replace"));
-        self.font,self.font_path,self.border_font,self.border_font_path=_choose_fonts(self.ttf,self.font_size);
-        w=ctypes.c_int(); h=ctypes.c_int(); self.ttf.TTF_SizeUTF8(self.font,b"M",ctypes.byref(w),ctypes.byref(h));
-        self.cell_width=max(7,int(w.value)); self.cell_height=max(12,int(h.value)+3);
-        self.overlay_height=max(112,self.accessory_button_height*2+22);
+        w=ctypes.c_int(); h=ctypes.c_int(); self.sdl.SDL_GetRendererOutputSize(self.renderer,ctypes.byref(w),ctypes.byref(h));
+        self.width=max(1,w.value); self.height=max(1,h.value);
+        self._load_fonts(self._auto_font_size() if self.font_auto else self.font_size,refine=self.font_auto);
         self.sdl.SDL_StopTextInput(); self._keyboard_visible=False;
         self._resize();
 
@@ -275,6 +345,9 @@ class GraphicalApplicationBackend:
 
     def _resize(self):
         w=ctypes.c_int(); h=ctypes.c_int(); self.sdl.SDL_GetRendererOutputSize(self.renderer,ctypes.byref(w),ctypes.byref(h)); self.width=max(1,w.value); self.height=max(1,h.value);
+        if self.font_auto:
+            wanted=self._auto_font_size();
+            if abs(wanted-self.font_size)>=2: self._load_fonts(wanted,refine=True);
         reserved=self._keyboard_reserved_pixels(); self._content_bottom=max(self.overlay_height+self.cell_height*8,self.height-reserved);
         usable=max(self.cell_height*8,self._content_bottom-self.overlay_height);
         self.columns=max(20,self.width//self.cell_width); self.rows=max(8,usable//self.cell_height);
@@ -434,12 +507,47 @@ class GraphicalApplicationBackend:
             if rect.x<=x<rect.x+rect.w and rect.y<=y<rect.y+rect.h: return action;
         return None;
 
+    def _repeatable_accessory_key(self,key):
+        return key in {Key.LEFT,Key.RIGHT,Key.UP,Key.DOWN,Key.HOME,Key.END,Key.PAGE_UP,Key.PAGE_DOWN,Key.DELETE,Key.TAB};
+
     def _send_accessory_key(self,key):
         ctrl,alt=self._consume_latched_modifiers(False,False);
         event=KeyEvent(key,text="",ctrl=ctrl,alt=alt,shift=False,action="press");
         handled=bool(self.application.dispatch(event));
         self.application.dispatch(KeyEvent(key,text="",ctrl=ctrl,alt=alt,shift=False,action="release"));
         return handled;
+
+    def _begin_accessory_hold(self,key):
+        ctrl,alt=self._consume_latched_modifiers(False,False);
+        self._held_accessory=key; self._held_accessory_mods=(ctrl,alt,False);
+        self._held_accessory_next=time.monotonic()+(self.accessory_repeat_delay_ms/1000.0);
+        handled=bool(self.application.dispatch(KeyEvent(key,text="",ctrl=ctrl,alt=alt,shift=False,action="press")));
+        self._redraw_requested=True;
+        return handled;
+
+    def _end_accessory_hold(self):
+        key=self._held_accessory;
+        if key is None: return False;
+        ctrl,alt,shift=self._held_accessory_mods;
+        self._held_accessory=None; self._held_accessory_next=0.0;
+        handled=bool(self.application.dispatch(KeyEvent(key,text="",ctrl=ctrl,alt=alt,shift=shift,action="release")));
+        self._redraw_requested=True;
+        return handled;
+
+    def _process_accessory_repeat(self):
+        key=self._held_accessory;
+        if key is None or not self.accessory_repeat_enabled: return False;
+        now=time.monotonic();
+        if now < self._held_accessory_next: return False;
+        ctrl,alt,shift=self._held_accessory_mods; dirty=False;
+        # At most four catch-up events prevent a delayed frame from producing an
+        # unbounded burst, while preserving normal held-key cadence.
+        count=0; interval=self.accessory_repeat_interval_ms/1000.0;
+        while now >= self._held_accessory_next and count<4:
+            dirty=bool(self.application.dispatch(KeyEvent(key,text="",ctrl=ctrl,alt=alt,shift=shift,action="repeat"))) or dirty;
+            self._held_accessory_next+=interval; count+=1;
+        if count>=4 and now>=self._held_accessory_next: self._held_accessory_next=now+interval;
+        return dirty;
 
     def _activate_overlay(self,action):
         if action=="exit": self.application.stop(); return True;
@@ -460,6 +568,13 @@ class GraphicalApplicationBackend:
 
     def _pointer(self,x,y,action,button="left"):
         hit=self._overlay_hit(x,y);
+        if action=="press" and hit:
+            if self.accessory_repeat_enabled and self._repeatable_accessory_key(hit): return self._begin_accessory_hold(hit);
+            return True;
+        if action=="move" and self._held_accessory is not None:
+            if hit != self._held_accessory: return self._end_accessory_hold();
+            return True;
+        if action=="release" and self._held_accessory is not None: return self._end_accessory_hold();
         if hit and action=="release": return self._activate_overlay(hit);
         if y>=self._content_bottom-self.overlay_height: return False;
         gx=max(0,int(x)//self.cell_width); gy=max(0,int(y)//self.cell_height);
@@ -493,17 +608,14 @@ class GraphicalApplicationBackend:
             while self.application.running:
                 dirty=self.application._process_external_requests() or dirty;
                 while self.sdl.SDL_PollEvent(ctypes.byref(event)): dirty=self._dispatch(event) or dirty;
+                dirty=self._process_accessory_repeat() or dirty;
                 for callback in list(self.application._idle_callbacks): dirty=bool(callback()) or dirty;
                 if dirty or self._redraw_requested: self._draw(); dirty=False;
                 self.sdl.SDL_Delay(frame_delay);
             return 0;
         finally:
             self.application._active_gui_backend=None; self.application._run_thread_ident=None;
-            for texture in list(self._texture_cache.values()):
-                try: self.sdl.SDL_DestroyTexture(texture);
-                except Exception: pass;
-            if self.border_font and self.border_font!=self.font: self.ttf.TTF_CloseFont(self.border_font);
-            if self.font: self.ttf.TTF_CloseFont(self.font);
+            self._close_fonts();
             if self.ttf: self.ttf.TTF_Quit();
             if self.renderer: self.sdl.SDL_DestroyRenderer(self.renderer);
             if self.window: self.sdl.SDL_DestroyWindow(self.window);

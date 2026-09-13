@@ -78,3 +78,18 @@ def test_sumgui_easy_android_transpile(tmp_path):
     assert "--requirements=python3,sdl2" in command;
     orientations=[item for item in command if item.startswith("--orientation=")];
     assert orientations == ["--orientation=portrait","--orientation=landscape","--orientation=portrait-reverse","--orientation=landscape-reverse"];
+
+def test_android_accessory_repeat_contract():
+    from pathlib import Path
+    import ast
+    import json
+    root=Path(__file__).resolve().parents[1]
+    project=json.loads((root/'examples'/'sumedit-android'/'project.sum').read_text())
+    repeat=project['interface']['keyboard']['repeat']
+    assert repeat == {'enabled': True, 'delay_ms': 400, 'interval_ms': 55}
+    source=(root/'examples'/'sumedit-android'/'vendor'/'sumgui'/'application_backend.py').read_text()
+    ast.parse(source)
+    assert 'action="repeat"' in source
+    assert 'def _process_accessory_repeat(self):' in source
+    assert 'def _begin_accessory_hold(self,key):' in source
+    assert 'def _end_accessory_hold(self):' in source

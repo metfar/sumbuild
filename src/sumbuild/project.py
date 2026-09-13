@@ -117,7 +117,7 @@ class SumProject:
     @classmethod
     def create(cls, root, name, entrypoint="main.py", language="python"):
         root=Path(root).resolve(); root.mkdir(parents=True, exist_ok=True);
-        data={"sum_project":PROJECT_FORMAT,"name":name,"version":"0.1.0","language":language,"entrypoint":entrypoint,"sources":[entrypoint],"resources":[],"dependencies":[],"interface":{"screen":"auto","orientation":"auto","font_size":"auto","keyboard":{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto"},"shortcuts":{"exit":"F10","fullscreen":"ALT+ENTER"}},"build":{"targets":["host","android"],"console":True,"host":{"backend":"auto"},"android":{"backend":"auto","requirements":["python3","sdl2"]}}};
+        data={"sum_project":PROJECT_FORMAT,"name":name,"version":"0.1.0","language":language,"entrypoint":entrypoint,"sources":[entrypoint],"resources":[],"dependencies":[],"interface":{"screen":"auto","orientation":"auto","font_size":"auto","keyboard":{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto","repeat":{"enabled":True,"delay_ms":400,"interval_ms":55}},"shortcuts":{"exit":"F10","fullscreen":"ALT+ENTER"}},"build":{"targets":["host","android"],"console":True,"host":{"backend":"auto"},"android":{"backend":"auto","requirements":["python3","sdl2"]}}};
         project=cls(root, data);
         (root / PROJECT_FILENAME).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8");
         return project;

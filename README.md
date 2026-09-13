@@ -84,3 +84,26 @@ The mobile editor accessory bar now defaults to 92-pixel-high buttons per row an
 ## 0.1.0a11
 
 Corrected the Android SUM keybar Spectrum-style arrow geometry. The triangular head now widens from tip to base, producing proper robust cursor arrows instead of torch-like shapes.
+
+
+## 0.1.0a13
+
+Android accessory keys now implement press/repeat/release semantics for held navigation/editing keys.
+The default touch repeat is 400 ms initial delay and 55 ms interval, configurable under
+`interface.keyboard.repeat`. Arrow keys, Home/End, PgUp/PgDn, Delete and Tab repeat while held;
+modifier state is captured for the entire hold so combinations such as Ctrl+Right repeat correctly.
+Dragging off a held key cancels it with a release event. Physical SDL keyboard repeat remains native.
+
+### 0.1.0a13 responsive Android text scale
+
+The Android SUM GUI backend now supports `interface.font_size = "auto"`.  Auto mode
+selects font size from the physical SDL renderer dimensions and a target terminal
+column count instead of using one fixed pixel size on every device.  The default
+acceptance profile targets 48 columns in portrait and 80 in landscape, bounded by
+22..64 px, and refines the estimate using the actual selected monospace font metrics.
+Rotation recalculates the font and terminal geometry.  Showing/hiding the IME does
+not independently shrink the font; it changes the usable rows instead.
+
+The Android accessory keybar can likewise use `accessory_button_height = "auto"`;
+its touch height follows the resolved font size, so tablet controls do not become
+proportionally tiny while phone controls retain approximately the a12 dimensions.

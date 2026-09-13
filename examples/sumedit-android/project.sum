@@ -27,15 +27,26 @@
       "profile": "keybar",
       "show_hide": true,
       "reserve": "auto",
-      "accessory_button_height": 92,
+      "accessory_button_height": "auto",
       "accessory_arrow_style": "spectrum",
-      "accessory_bold": true
+      "accessory_bold": true,
+      "repeat": {
+        "enabled": true,
+        "delay_ms": 400,
+        "interval_ms": 55
+      }
     },
     "shortcuts": {
       "exit": "F10",
       "fullscreen": "ALT+ENTER"
     },
-    "font_size": 24
+    "font_size": "auto",
+    "font_auto": {
+      "portrait_columns": 48,
+      "landscape_columns": 80,
+      "min_px": 22,
+      "max_px": 64
+    }
   },
   "build": {
     "targets": [
