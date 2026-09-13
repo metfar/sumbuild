@@ -31,13 +31,24 @@ if VENDOR not in sys.path: sys.path.insert(0,VENDOR);
 from sumtui.tools.edit import EditApp;
 
 
+def _crash_log_path():
+    base=os.environ.get("SUM_STORAGE_PRIVATE", "").strip() or ROOT;
+    try:
+        os.makedirs(base,exist_ok=True);
+        return os.path.join(base,"sumedit-crash.log");
+    except BaseException:
+        return os.path.join(ROOT,"sumedit-crash.log");
+
+
 def main():
     try:
-        sample=os.path.join(ROOT,"sample.txt");
-        app=EditApp(sample if os.path.exists(sample) else None);
+        app=EditApp(None);
         return app.run(backend="gui");
     except BaseException:
         text=traceback.format_exc(); print(text,flush=True);
+        try:
+            with open(_crash_log_path(),"w",encoding="utf-8") as stream: stream.write(text);
+        except BaseException: pass;
         try:
             lib=ctypes.CDLL("libSDL2.so");
             lib.SDL_ShowSimpleMessageBox.argtypes=[ctypes.c_uint32,ctypes.c_char_p,ctypes.c_char_p,ctypes.c_void_p];
@@ -45,6 +56,7 @@ def main():
             lib.SDL_ShowSimpleMessageBox(0x10,b"SUMEDIT runtime error",text.encode("utf-8","replace"),None);
         except BaseException: pass;
         return 1;
+
 
 
 if __name__ == "__main__": raise SystemExit(main());

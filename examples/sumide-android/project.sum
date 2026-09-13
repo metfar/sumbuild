@@ -45,7 +45,8 @@
     "shortcuts": {
       "exit": "F10",
       "fullscreen": "ALT+ENTER"
-    }
+    },
+    "presplash": "sum"
   },
   "build": {
     "targets": [

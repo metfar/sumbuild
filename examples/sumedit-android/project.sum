@@ -49,7 +49,8 @@
       "min_px": 18,
       "max_px": 64
     },
-    "icon": "sum"
+    "icon": "sum",
+    "presplash": "sum"
   },
   "build": {
     "targets": [

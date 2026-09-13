@@ -1,6 +1,6 @@
-> Current Android compatibility revision: **0.1.0a31** — shared p4a source cache + pandas/NumPy Android compatibility matrix.
+> Current Android compatibility revision: **0.1.0a32** — Android lifecycle/storage + SUM presplash + maximized run output + shared p4a source cache.
 
-> Latest Android compatibility notes: see `README-a31.md`.
+> Latest Android compatibility notes: see `README-a32.md`.
 
 See `README-a28.md` for the Android scientific tag fix and Android shell-profile support.
 

@@ -54,11 +54,11 @@ SUM_ANDROID_PYTHON_VERSION="3.13.13";
 SUM_ANDROID_NUMPY_VERSION="2.2.3";
 SUM_ANDROID_PANDAS_VERSION="2.2.3";
 SUM_ANDROID_MATPLOTLIB_VERSION="3.10.1";
-SUM_P4A_PROFILE_REVISION="a31-shared-source-cache-1";
+SUM_P4A_PROFILE_REVISION="a32-android-lifecycle-storage-1";
 SUM_P4A_SOURCE_CACHE_REVISION="sources-v1";
 
 SUM_ANDROID_CORE_REQUIREMENTS=(
-    "python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify",
+    "python3","sdl2","android","rich","pygments","markdown-it-py","mdurl","markdown","markdownify",
     "numpy","pandas","matplotlib",
 );
 
@@ -437,29 +437,40 @@ def _copy_import_package(name,destination):
 
 
 def _patch_android_sumtui_storage(vendor):
-    """Make Open/Save As start in shared storage for Android development apps.""";
+    """Use private Android storage for safe saves and shared storage for browsing.""";
     edit=Path(vendor) / "sumtui" / "tools" / "edit.py";
     if not edit.exists(): return False;
     text=edit.read_text(encoding="utf-8");
     marker='_EOL_MARKERS = {"\\n": "↵", "\\r\\n": "⏎", "\\r": "↩"};';
     helper=(
+        '\n\ndef _sum_storage_path(name, fallback=None):\n'
+        '    raw=os.environ.get(name, "").strip();\n'
+        '    if raw:\n'
+        '        try:\n'
+        '            path=Path(raw).expanduser(); path.mkdir(parents=True, exist_ok=True); return path;\n'
+        '        except OSError:\n'
+        '            pass;\n'
+        '    return Path(fallback).expanduser() if fallback else None;\n'
+        '\n\ndef _sum_storage_writable(path):\n'
+        '    if path is None: return False;\n'
+        '    try:\n'
+        '        path.mkdir(parents=True, exist_ok=True); probe=path / (".sum-write-test-{}".format(os.getpid())); probe.write_text("",encoding="utf-8"); probe.unlink(); return True;\n'
+        '    except OSError:\n'
+        '        return False;\n'
         '\n\ndef _sum_storage_start(path=None, fallback_name="untitled.txt"):\n'
-        '    # Prefer Android shared storage for Open/Save As.\n'
-        '    raw=os.environ.get("SUM_STORAGE_ROOT","").strip();\n'
-        '    root=Path(raw).expanduser() if raw else None;\n'
+        '    # Open prefers shared storage; Save As uses it only when Android actually allows writes.\n'
+        '    private=_sum_storage_path("SUM_STORAGE_PRIVATE", Path.cwd());\n'
+        '    shared=_sum_storage_path("SUM_STORAGE_ROOT", None);\n'
         '    current=Path(path).expanduser() if path is not None else None;\n'
-        '    if root is not None and root.is_dir():\n'
-        '        if current is not None:\n'
-        '            try:\n'
-        '                current.resolve().relative_to(root.resolve());\n'
-        '                return current.parent if current.suffix else current;\n'
-        '            except (OSError,ValueError):\n'
-        '                pass;\n'
-        '        return root / fallback_name if fallback_name else root;\n'
-        '    if current is not None: return current.parent if current.suffix else current;\n'
-        '    return Path.cwd() / fallback_name if fallback_name else Path.cwd();\n'
+        '    if current is not None:\n'
+        '        return current.parent if current.suffix else current;\n'
+        '    if fallback_name is None:\n'
+        '        return shared if shared is not None and shared.is_dir() else private;\n'
+        '    base=shared if _sum_storage_writable(shared) else private;\n'
+        '    if base is None: base=Path.cwd();\n'
+        '    return base / fallback_name;\n'
     );
-    if '_sum_storage_start(' not in text:
+    if '_sum_storage_path(' not in text:
         if marker not in text: return False;
         text=text.replace(marker,marker+helper,1);
     text=text.replace('start = self.document.path.parent if self.document.path is not None else Path.cwd();','start = _sum_storage_start(self.document.path, fallback_name=None);');
@@ -517,8 +528,17 @@ def _stage_python_sum_runtime(project,directory):
         'ROOT=Path(__file__).resolve().parent; VENDOR=ROOT / "vendor";\n'
         'sys.path.insert(0,str(VENDOR));\n'
         'os.environ["PYTHONPATH"]=str(VENDOR)+(os.pathsep+os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else "");\n'
-        'os.environ.setdefault("SUM_STORAGE_ROOT","/storage/emulated/0");\n'
         'os.environ.setdefault("SUM_ANDROID","1"); os.environ.setdefault("SUM_GUI_BACKEND","sdl2"); os.environ.setdefault("SUM_AUDIO_BACKEND","sdl2");\n'
+        'try:\n'
+        '    from android.storage import app_storage_path, primary_external_storage_path;\n'
+        '    _sum_private=app_storage_path();\n'
+        '    try: _sum_shared=primary_external_storage_path();\n'
+        '    except Exception: _sum_shared="/storage/emulated/0";\n'
+        'except Exception:\n'
+        '    _sum_private=str(ROOT / ".sum-private"); _sum_shared="/storage/emulated/0";\n'
+        'os.makedirs(_sum_private,exist_ok=True); os.makedirs(os.path.join(_sum_private,"tmp"),exist_ok=True);\n'
+        'os.environ.setdefault("SUM_STORAGE_PRIVATE",_sum_private); os.environ.setdefault("SUM_STORAGE_ROOT",_sum_shared);\n'
+        'os.environ.setdefault("XDG_CONFIG_HOME",os.path.join(_sum_private,"config")); os.environ.setdefault("TMPDIR",os.path.join(_sum_private,"tmp"));\n'
     );
     if runtime == "sumide":
         wrapper=common + 'from sumide.app import main;\nraise SystemExit(main(["--gui"]));\n';
@@ -532,7 +552,7 @@ def _stage_python_sum_runtime(project,directory):
         wrapper=(common + 'import runpy;\nrunpy.run_path(str(ROOT / {entry!r}), run_name="__main__");\n').format(entry=staged_name);
         adapter="sum-full-app";
     (Path(directory) / "main.py").write_text(wrapper,encoding="utf-8");
-    return {"runtime":runtime,"packages":packages,"adapter":adapter,"storage_root":"/storage/emulated/0"};
+    return {"runtime":runtime,"packages":packages,"adapter":adapter,"storage_root":"android-private+shared"};
 
 
 def _patch_android_sumide_shell(vendor):
@@ -558,6 +578,66 @@ def _patch_android_sumide_shell(vendor):
         new='completed = subprocess.run(command, shell=True, executable=("/system/bin/sh" if os.environ.get("SUM_ANDROID") == "1" else None), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", check=False);';
         if old in text:
             app.write_text(text.replace(old,new),encoding="utf-8"); changed=True;
+    return changed;
+
+
+def _patch_android_sumide_runtime(vendor):
+    """Android-specific IDE behavior: safe temp files, maximized output and standalone pause.""";
+    app=Path(vendor) / "sumide" / "app.py";
+    if not app.exists(): return False;
+    text=app.read_text(encoding="utf-8"); changed=False;
+    helper=(
+        '\n\ndef _sum_android_private_dir():\n'
+        '    raw=os.environ.get("SUM_STORAGE_PRIVATE", "").strip();\n'
+        '    path=Path(raw).expanduser() if raw else Path(tempfile.gettempdir());\n'
+        '    try: path.mkdir(parents=True, exist_ok=True);\n'
+        '    except OSError: path=Path(tempfile.gettempdir());\n'
+        '    return path;\n'
+        '\n\ndef _sum_android_shared_dir():\n'
+        '    raw=os.environ.get("SUM_STORAGE_ROOT", "").strip();\n'
+        '    path=Path(raw).expanduser() if raw else _sum_android_private_dir();\n'
+        '    return path if path.is_dir() else _sum_android_private_dir();\n'
+        '\n\ndef _sum_android_work_dir(path=None):\n'
+        '    candidate=Path(path).expanduser().parent if path is not None else _sum_android_private_dir();\n'
+        '    try:\n'
+        '        candidate.mkdir(parents=True, exist_ok=True);\n'
+        '        probe=candidate / (".sum-write-test-{}".format(os.getpid())); probe.write_text("",encoding="utf-8"); probe.unlink(); return candidate;\n'
+        '    except OSError:\n'
+        '        return _sum_android_private_dir();\n'
+    );
+    marker='class _RSession:';
+    if '_sum_android_private_dir' not in text and marker in text:
+        text=text.replace(marker,helper+'\n\n'+marker,1); changed=True;
+    replacements={
+        'start = self.document.path.parent if self.document.path is not None else Path.cwd();':'start = self.document.path.parent if self.document.path is not None else _sum_android_shared_dir();',
+        'directory = self.document.path.parent if self.document.path is not None else Path.cwd();':'directory = _sum_android_work_dir(self.document.path);',
+        'return Path.cwd() / ("untitled" + suffix);':'return _sum_android_private_dir() / ("untitled" + suffix);',
+        'cwd = str(self.document.path.parent if self.document.path is not None else Path.cwd());':'cwd = str(_sum_android_work_dir(self.document.path));',
+    };
+    for old,new in replacements.items():
+        if old in text:
+            text=text.replace(old,new); changed=True;
+    old='        self.workspace.show(self.output_window);\n        try:\n            self._start_process();';
+    new='        self.workspace.show(self.output_window);\n        self.output_window.maximize();\n        self.workspace.activate(self.output_window);\n        try:\n            self._start_process();';
+    if old in text:
+        text=text.replace(old,new,1); changed=True;
+    old='            self._cleanup_process();\n            dirty = True;';
+    new=(
+        '            self._cleanup_process();\n'
+        '            if os.environ.get("SUM_STANDALONE_RUN", "").strip() == "1" and not self.app.modal_depth:\n'
+        '                self._append_output("\\nPulse Enter para finalizar.\\n");\n'
+        '                self.output_window.maximize(); self.workspace.show(self.output_window);\n'
+        '                def _standalone_exit(*_args):\n'
+        '                    self.app.stop(); return True;\n'
+        '                button=Button("Salir", on_press=_standalone_exit, default=True);\n'
+        '                body=VBox(Label("Pulse Enter para finalizar"), button, sizes=[1, None]);\n'
+        '                self.app.push_modal(Dialog(body, title="Programa finalizado", width=52, height=7, on_cancel=_standalone_exit));\n'
+        '                self.app.focus.set(button);\n'
+        '            dirty = True;'
+    );
+    if old in text:
+        text=text.replace(old,new,1); changed=True;
+    app.write_text(text,encoding="utf-8");
     return changed;
 
 
@@ -589,6 +669,7 @@ def _stage_sum_ecosystem(vendor, required=()):
     _patch_android_sumbasic_frontend(vendor);
     _patch_android_sumcore_audio(vendor);
     _patch_android_sumide_shell(vendor);
+    _patch_android_sumide_runtime(vendor);
     return copied;
 
 
@@ -615,13 +696,23 @@ def _stage_language_runtime(project,directory):
         'VENDOR=ROOT / "vendor";\n'
         'sys.path.insert(0,str(VENDOR));\n'
         'os.environ["PYTHONPATH"]=str(VENDOR)+(os.pathsep+os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else "");\n'
-        'os.environ.setdefault("SUM_STORAGE_ROOT","/storage/emulated/0");\n'
         'os.environ.setdefault("SUM_ANDROID","1"); os.environ.setdefault("SUM_GUI_BACKEND","sdl2"); os.environ.setdefault("SUM_AUDIO_BACKEND","sdl2");\n'
+        'try:\n'
+        '    from android.storage import app_storage_path, primary_external_storage_path;\n'
+        '    _sum_private=app_storage_path();\n'
+        '    try: _sum_shared=primary_external_storage_path();\n'
+        '    except Exception: _sum_shared="/storage/emulated/0";\n'
+        'except Exception:\n'
+        '    _sum_private=str(ROOT / ".sum-private"); _sum_shared="/storage/emulated/0";\n'
+        'os.makedirs(_sum_private,exist_ok=True); os.makedirs(os.path.join(_sum_private,"tmp"),exist_ok=True);\n'
+        'os.environ.setdefault("SUM_STORAGE_PRIVATE",_sum_private); os.environ.setdefault("SUM_STORAGE_ROOT",_sum_shared);\n'
+        'os.environ.setdefault("XDG_CONFIG_HOME",os.path.join(_sum_private,"config")); os.environ.setdefault("TMPDIR",os.path.join(_sum_private,"tmp"));\n'
         'from sumide.app import {func};\n'
         'raise SystemExit({func}(["--gui","--run",str(ROOT / {src!r})]));\n'
     ).format(func=entry_func,src=source);
+    if language == "bash": wrapper=wrapper.replace("from sumide.app import", "os.environ.setdefault(\"SUM_STANDALONE_RUN\",\"1\");\nfrom sumide.app import",1);
     (Path(directory) / "main.py").write_text(wrapper,encoding="utf-8");
-    return {"runtime":language,"packages":packages,"adapter":"sumide-gui-run","storage_root":"/storage/emulated/0"};
+    return {"runtime":language,"packages":packages,"adapter":"sumide-gui-run","storage_root":"android-private+shared"};
 
 
 def _stage_android(project, directory):
@@ -706,6 +797,18 @@ def _android_icon(project, directory):
     if not source.is_absolute(): source=(project.root / source).resolve();
     if not source.exists(): raise BuildError("application icon not found: {}".format(source));
     target=Path(directory) / ("app-icon" + source.suffix.lower()); shutil.copy2(str(source),str(target)); return target;
+
+
+def _android_presplash(project, directory):
+    """Generate/use a SUM-owned presplash instead of the bootstrap default.""";
+    value=project.interface.get("presplash",_android_settings(project).get("presplash","sum"));
+    if value in (None,False,"none","off"): return None;
+    if value is True or str(value).strip().lower() in ("","auto","sum","default"):
+        return _write_default_sum_icon(Path(directory) / "sum-presplash.png",size=768);
+    source=Path(str(value));
+    if not source.is_absolute(): source=(project.root / source).resolve();
+    if not source.exists(): raise BuildError("application presplash not found: {}".format(source));
+    target=Path(directory) / ("app-presplash" + source.suffix.lower()); shutil.copy2(str(source),str(target)); return target;
 
 
 def _p4a_tool_version():
@@ -1113,7 +1216,7 @@ def prepare_android(project, directory=None, backend=None, details=False):
     mode=str(settings.get("mode","debug")).lower();
     arch=str(settings.get("arch","arm64-v8a"));
     requirements=_android_requirements(project);
-    if project.language in ("sumbasic","sumx","sumr") or str(settings.get("runtime","")).lower() in ("sumide","sum-runtime","sum-full"):
+    if project.language in ("sumbasic","sumx","sumr","bash") or str(settings.get("runtime","")).lower() in ("sumide","sum-runtime","sum-full"):
         existing_names={_android_requirement_name(item) for item in requirements};
         for item in SUM_ANDROID_CORE_REQUIREMENTS:
             name=_android_requirement_name(item);
@@ -1122,7 +1225,8 @@ def prepare_android(project, directory=None, backend=None, details=False):
     requirements=_pin_android_runtime_requirements(requirements);
     permissions=_android_permissions(project);
     icon=_android_icon(project,directory);
-    runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"icon":"sum" if icon and icon.name == "sum-default-icon.png" else (str(icon.name) if icon else None),"font_size":project.interface.get("font_size","auto"),"font_auto":project.interface.get("font_auto",{}),"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto"}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"exit_button":project.interface.get("exit_button","auto"),"transpile":stage};
+    presplash=_android_presplash(project,directory);
+    runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"icon":"sum" if icon and icon.name == "sum-default-icon.png" else (str(icon.name) if icon else None),"presplash":"sum" if presplash and presplash.name == "sum-presplash.png" else (str(presplash.name) if presplash else None),"font_size":project.interface.get("font_size","auto"),"font_auto":project.interface.get("font_auto",{}),"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto"}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"exit_button":project.interface.get("exit_button","auto"),"transpile":stage};
     (directory / "sum-android.json").write_text(__import__("json").dumps(runtime,indent=2,ensure_ascii=False)+"\n",encoding="utf-8");
     if selected == "p4a":
         storage=_p4a_profile_storage(project,requirements,arch);
@@ -1131,6 +1235,7 @@ def prepare_android(project, directory=None, backend=None, details=False):
         if local_recipes is not None: command.append("--local-recipes={}".format(local_recipes));
         if mode == "debug": command.append("--debug");
         if icon is not None: command.append("--icon={}".format(icon));
+        if presplash is not None: command.append("--presplash={}".format(presplash)); command.append("--presplash-color=#0000CD");
         for permission in permissions: command.append("--permission={}".format(permission));
         if orientation == "auto":
             # p4a 2026 accepts multiple allowed orientations.  Supplying all
@@ -1146,6 +1251,7 @@ def prepare_android(project, directory=None, backend=None, details=False):
         return result if details else result[:2];
     spec="""[app]\ntitle = {title}\npackage.name = {package_name}\npackage.domain = {domain}\nsource.dir = .\nsource.include_exts = py,png,jpg,jpeg,gif,svg,json,txt,md,csv,rds,sum,bas,prg,R,yaml,yml\nversion = {version}\nrequirements = {requirements}\nfullscreen = 0\n\n[buildozer]\nlog_level = 2\nwarn_on_root = 1\n""".format(title=project.name,package_name=package_name,domain=domain,version=project.version,requirements=",".join(requirements));
     if icon is not None: spec=spec.replace("version = {}".format(project.version),"version = {}\nicon.filename = {}".format(project.version,icon.name));
+    if presplash is not None: spec=spec.replace("fullscreen = 0","presplash.filename = {}\npresplash.color = #0000CD\nfullscreen = 0".format(presplash.name));
     if permissions: spec=spec.replace("requirements = {}".format(",".join(requirements)),"requirements = {}\nandroid.permissions = {}".format(",".join(requirements),", ".join(permissions)));
     if orientation in ("auto","sensor"): spec=spec.replace("fullscreen = 0","orientation = all\nfullscreen = 0");
     else: spec=spec.replace("fullscreen = 0","orientation = {}\nfullscreen = 0".format(orientation));

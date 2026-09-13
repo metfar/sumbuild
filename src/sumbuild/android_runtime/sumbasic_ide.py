@@ -384,6 +384,7 @@ class SumBasicIDE(ScriptIDE):
 
     def _prepare_run(self):
         self.workspace.show(self.output_window);
+        self.output_window.maximize();
         self.workspace.activate(self.output_window);
         while True:
             try:
@@ -535,6 +536,7 @@ class SumBasicIDE(ScriptIDE):
             self._update_status("No BASIC STOP to continue from.");
             return True;
         self.workspace.show(self.output_window);
+        self.output_window.maximize();
         self.workspace.activate(self.output_window);
         with self._run_lock:
             self._run_finished = False;

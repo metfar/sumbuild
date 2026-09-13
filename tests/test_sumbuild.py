@@ -501,7 +501,7 @@ def test_a28_full_runtime_core_requirements_keep_git_recipes_unversioned():
 
 def test_a28_profile_revision_and_recipe_tag_overrides():
     from sumbuild.backends import SUM_P4A_PROFILE_REVISION;
-    assert SUM_P4A_PROFILE_REVISION.startswith("a31-");
+    assert SUM_P4A_PROFILE_REVISION.startswith("a32-");
     import sumbuild.backends as backends;
     overrides=backends._android_recipe_version_overrides();
     assert overrides["VERSION_numpy"] == "v2.2.3";
@@ -580,3 +580,76 @@ def test_a31_source_cache_lock_rejects_live_owner_and_recovers_stale(tmp_path):
     second=backends._acquire_p4a_source_lock(source);
     assert second.exists();
     backends._release_p4a_source_lock(second);
+
+
+
+def test_a32_android_full_runtime_includes_android_recipe():
+    from sumbuild.backends import SUM_ANDROID_CORE_REQUIREMENTS;
+    assert "android" in SUM_ANDROID_CORE_REQUIREMENTS;
+    source=(Path(__file__).resolve().parents[1]/"src"/"sumbuild"/"backends.py").read_text(encoding="utf-8");
+    assert '("sumbasic","sumx","sumr","bash")' in source;
+
+
+def test_a32_prepare_android_uses_sum_presplash(tmp_path):
+    import json;
+    main=tmp_path/"main.py"; main.write_text("print(1)\n",encoding="utf-8");
+    manifest=tmp_path/"project.sum";
+    manifest.write_text(json.dumps({"sum_project":1,"name":"splash","entrypoint":"main.py","sources":["main.py"],"build":{"android":{"backend":"p4a","requirements":["python3","sdl2"]}}}),encoding="utf-8");
+    directory,command=prepare_android(manifest,backend="p4a");
+    assert (directory/"sum-presplash.png").exists();
+    assert any(item.startswith("--presplash=") for item in command);
+    assert "--presplash-color=#0000CD" in command;
+
+
+def test_a32_renderer_hides_android_loading_screen_after_first_frame():
+    root=Path(__file__).resolve().parents[1];
+    source=(root/"src"/"sumbuild"/"android_runtime"/"sumgui_application_backend.py").read_text(encoding="utf-8");
+    assert "SDL_RenderPresent(self.renderer)" in source;
+    assert "from android import loadingscreen" in source;
+    assert "loadingscreen.hide_loading_screen()" in source;
+    assert "self._loading_screen_hidden" in source;
+
+
+def test_a32_android_launchers_export_private_storage_contract():
+    root=Path(__file__).resolve().parents[1];
+    source=(root/"src"/"sumbuild"/"backends.py").read_text(encoding="utf-8");
+    for token in ("app_storage_path", "primary_external_storage_path", "SUM_STORAGE_PRIVATE", "XDG_CONFIG_HOME", "TMPDIR"):
+        assert token in source;
+    assert 'SUM_STANDALONE_RUN' in source;
+
+
+def test_a32_sumide_patch_maximizes_output_and_uses_private_temp(tmp_path):
+    import sumbuild.backends as backends;
+    vendor=tmp_path/"vendor"; package=vendor/"sumide"; package.mkdir(parents=True);
+    app=(package/"app.py");
+    app.write_text(
+        'import os, tempfile\nfrom pathlib import Path\n\nclass _RSession: pass\n\n'
+        'class Demo:\n'
+        '    def paths(self):\n'
+        '        start = self.document.path.parent if self.document.path is not None else Path.cwd();\n'
+        '        directory = self.document.path.parent if self.document.path is not None else Path.cwd();\n'
+        '        return Path.cwd() / ("untitled" + suffix);\n'
+        '    def run_program(self):\n'
+        '        self.workspace.show(self.output_window);\n'
+        '        try:\n'
+        '            self._start_process();\n'
+        '        except Exception:\n'
+        '            pass;\n'
+        '    def poll(self):\n'
+        '            self._cleanup_process();\n'
+        '            dirty = True;\n',
+        encoding="utf-8",
+    );
+    backends._patch_android_sumide_runtime(vendor);
+    text=app.read_text(encoding="utf-8");
+    assert "_sum_android_private_dir" in text;
+    assert "self.output_window.maximize()" in text;
+    assert "Pulse Enter para finalizar" in text;
+
+
+def test_a32_sumedit_android_starts_clean_and_logs_crashes():
+    root=Path(__file__).resolve().parents[1];
+    source=(root/"examples"/"sumedit-android"/"main.py").read_text(encoding="utf-8");
+    assert "EditApp(None)" in source;
+    assert "sumedit-crash.log" in source;
+    assert "EditApp(sample" not in source;

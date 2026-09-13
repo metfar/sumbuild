@@ -263,7 +263,7 @@ class GraphicalApplicationBackend:
         except (TypeError,ValueError): self.accessory_repeat_interval_ms=55;
         self._accessory_hitboxes=[]; self._content_bottom=self.height-self.overlay_height;
         self._held_accessory=None; self._held_accessory_mods=(False,False,False); self._held_accessory_next=0.0;
-        self._accessory_profile=None;
+        self._accessory_profile=None; self._loading_screen_hidden=False;
         if get_profile is not None:
             try: self._accessory_profile=get_profile(self.keyboard_profile if self.keyboard_profile not in (None,"auto",True) else "keybar");
             except Exception: self._accessory_profile=None;
@@ -525,7 +525,15 @@ class GraphicalApplicationBackend:
                     if cells<=0: continue;
                     col+=self._draw_text_cell(char,col,row,fg,bg,underline,strike,bold);
                 if col>=self.columns: break;
-        self._overlay(); self.sdl.SDL_RenderPresent(self.renderer); self._redraw_requested=False;
+        self._overlay(); self.sdl.SDL_RenderPresent(self.renderer);
+        if not self._loading_screen_hidden:
+            self._loading_screen_hidden=True;
+            try:
+                from android import loadingscreen;
+                loadingscreen.hide_loading_screen();
+            except Exception:
+                pass;
+        self._redraw_requested=False;
 
     def _mods(self,mod): return bool(mod&KMOD_CTRL),bool(mod&KMOD_ALT),bool(mod&KMOD_SHIFT);
 
