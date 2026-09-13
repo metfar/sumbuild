@@ -1,3 +1,5 @@
+> Current Android compatibility revision: **0.1.0a30** — pandas 2.2.3 exact p4a include patch + NumPy 2.2.3 build pin.
+
 > Latest Android compatibility notes: see `README-a29.md`.
 
 See `README-a28.md` for the Android scientific tag fix and Android shell-profile support.

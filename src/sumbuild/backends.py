@@ -53,7 +53,7 @@ SUM_ANDROID_PYTHON_VERSION="3.13.13";
 SUM_ANDROID_NUMPY_VERSION="2.2.3";
 SUM_ANDROID_PANDAS_VERSION="2.2.3";
 SUM_ANDROID_MATPLOTLIB_VERSION="3.10.1";
-SUM_P4A_PROFILE_REVISION="a29-android-pandas-build-numpy-pin-1";
+SUM_P4A_PROFILE_REVISION="a30-android-pandas-official-include-patch-1";
 
 SUM_ANDROID_CORE_REQUIREMENTS=(
     "python3","sdl2","rich","pygments","markdown-it-py","mdurl","markdown","markdownify",
@@ -944,8 +944,8 @@ diff '--color=auto' -uNr pandas/pandas/meson.build pandas.mod/pandas/meson.build
 -except Exception:
 -    incdir = np.get_include()
 -print(incdir)
--    '''
-+print(os.environ["NUMPY_INCLUDES"])
+-     '''
++print(os.environ["NUMPY_INCLUDES"]) 
 +    '''
 +  ],
 +  check: true

@@ -501,7 +501,7 @@ def test_a28_full_runtime_core_requirements_keep_git_recipes_unversioned():
 
 def test_a28_profile_revision_and_recipe_tag_overrides():
     from sumbuild.backends import SUM_P4A_PROFILE_REVISION;
-    assert SUM_P4A_PROFILE_REVISION.startswith("a29-");
+    assert SUM_P4A_PROFILE_REVISION.startswith("a30-");
     import sumbuild.backends as backends;
     overrides=backends._android_recipe_version_overrides();
     assert overrides["VERSION_numpy"] == "v2.2.3";
@@ -538,3 +538,5 @@ def test_a29_pandas_local_recipe_pins_isolated_build_numpy(tmp_path):
     assert 'old = \'"numpy>=2.0"\'' in recipe;
     assert 'new = \'"numpy==2.2.3"\'' in recipe;
     assert "inc_android" in patch;
+    assert "-     '''" in patch;
+    assert '+print(os.environ["NUMPY_INCLUDES"]) ' in patch;
