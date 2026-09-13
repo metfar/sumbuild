@@ -25,6 +25,9 @@ import os;
 import shutil;
 import subprocess;
 import sys;
+import struct;
+import zlib;
+import binascii;
 from .project import SumProject;
 from .transpile import TranspileError, transpile_sumgui_easy;
 
@@ -248,6 +251,61 @@ def _orientation(project):
     return value;
 
 
+def _png_chunk(kind, data):
+    kind=kind.encode("ascii");
+    return struct.pack(">I",len(data)) + kind + data + struct.pack(">I",binascii.crc32(kind + data) & 0xffffffff);
+
+
+def _write_default_sum_icon(path, size=512):
+    """Create the project-owned SUM Σ launcher icon without external image deps.""";
+    path=Path(path); size=max(128,int(size));
+    bg=(0,0,205,255); fg=(255,255,0,255); edge=(20,20,28,255);
+    pixels=[list(bg) for _ in range(size * size)];
+    def fill_rect(x0,y0,x1,y1,color):
+        x0=max(0,int(x0)); y0=max(0,int(y0)); x1=min(size,int(x1)); y1=min(size,int(y1));
+        for y in range(y0,y1):
+            row=y * size;
+            for x in range(x0,x1): pixels[row+x]=list(color);
+    def point_in_poly(x,y,pts):
+        inside=False; j=len(pts)-1;
+        for i,p in enumerate(pts):
+            xi,yi=p; xj,yj=pts[j];
+            if ((yi > y) != (yj > y)) and (x < (xj-xi) * (y-yi) / ((yj-yi) or 1e-9) + xi): inside=not inside;
+            j=i;
+        return inside;
+    def fill_poly(pts,color):
+        xs=[p[0] for p in pts]; ys=[p[1] for p in pts];
+        for y in range(max(0,int(min(ys))),min(size,int(max(ys))+1)):
+            row=y * size;
+            for x in range(max(0,int(min(xs))),min(size,int(max(xs))+1)):
+                if point_in_poly(x+0.5,y+0.5,pts): pixels[row+x]=list(color);
+    m=size*0.075; fill_rect(m,m,size-m,size-m,edge); fill_rect(m*1.35,m*1.35,size-m*1.35,size-m*1.35,bg);
+    # Geometric capital Sigma: broad top/bottom strokes plus diagonal centre.
+    x0=size*0.22; x1=size*0.79; y0=size*0.19; y1=size*0.81; stroke=size*0.105;
+    fill_rect(x0,y0,x1,y0+stroke,fg); fill_rect(x0,y1-stroke,x1,y1,fg);
+    fill_poly([(x0,y0),(x0+stroke*1.05,y0),(x1-stroke*0.35,size*0.50),(x0+stroke*1.05,y1),(x0,y1),(x1-stroke*1.55,size*0.50)],fg);
+    raw=bytearray();
+    for y in range(size):
+        raw.append(0);
+        for x in range(size): raw.extend(pixels[y*size+x]);
+    data=b"\x89PNG\r\n\x1a\n";
+    data+=_png_chunk("IHDR",struct.pack(">IIBBBBB",size,size,8,6,0,0,0));
+    data+=_png_chunk("IDAT",zlib.compress(bytes(raw),9));
+    data+=_png_chunk("IEND",b"");
+    path.write_bytes(data); return path;
+
+
+def _android_icon(project, directory):
+    value=project.interface.get("icon",_android_settings(project).get("icon","sum"));
+    if value in (None,False,"none","off"): return None;
+    if value is True or str(value).strip().lower() in ("","auto","sum","default"):
+        return _write_default_sum_icon(Path(directory) / "sum-default-icon.png");
+    source=Path(str(value));
+    if not source.is_absolute(): source=(project.root / source).resolve();
+    if not source.exists(): raise BuildError("application icon not found: {}".format(source));
+    target=Path(directory) / ("app-icon" + source.suffix.lower()); shutil.copy2(str(source),str(target)); return target;
+
+
 def prepare_android(project, directory=None, backend=None, details=False):
     project=project if isinstance(project, SumProject) else SumProject.load(project);
     if project.language != "python": raise BuildError("Android backend currently supports language=python; SUM runtime adapters come next");
@@ -264,11 +322,13 @@ def prepare_android(project, directory=None, backend=None, details=False):
     mode=str(settings.get("mode","debug")).lower();
     arch=str(settings.get("arch","arm64-v8a"));
     requirements=_android_requirements(project);
-    runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"font_size":project.interface.get("font_size","auto"),"font_auto":project.interface.get("font_auto",{}),"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto"}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"exit_button":project.interface.get("exit_button","auto"),"transpile":stage};
+    icon=_android_icon(project,directory);
+    runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"icon":"sum" if icon and icon.name == "sum-default-icon.png" else (str(icon.name) if icon else None),"font_size":project.interface.get("font_size","auto"),"font_auto":project.interface.get("font_auto",{}),"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto"}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"exit_button":project.interface.get("exit_button","auto"),"transpile":stage};
     (directory / "sum-android.json").write_text(__import__("json").dumps(runtime,indent=2,ensure_ascii=False)+"\n",encoding="utf-8");
     if selected == "p4a":
         command=["p4a","apk","--private",str(directory),"--package={}".format(package),"--name={}".format(project.name),"--version={}".format(project.version),"--bootstrap=sdl2","--requirements={}".format(",".join(requirements)),"--arch={}".format(arch)];
         if mode == "debug": command.append("--debug");
+        if icon is not None: command.append("--icon={}".format(icon));
         if orientation == "auto":
             # p4a 2026 accepts multiple allowed orientations.  Supplying all
             # four makes the manifest unspecified and feeds SDL the full
@@ -282,6 +342,7 @@ def prepare_android(project, directory=None, backend=None, details=False):
         result=(directory,command,selected,stage);
         return result if details else result[:2];
     spec="""[app]\ntitle = {title}\npackage.name = {package_name}\npackage.domain = {domain}\nsource.dir = .\nsource.include_exts = py,png,jpg,jpeg,gif,svg,json,txt,md,csv,rds,sum,bas,prg,R,yaml,yml\nversion = {version}\nrequirements = {requirements}\nfullscreen = 0\n\n[buildozer]\nlog_level = 2\nwarn_on_root = 1\n""".format(title=project.name,package_name=package_name,domain=domain,version=project.version,requirements=",".join(requirements));
+    if icon is not None: spec=spec.replace("version = {}".format(project.version),"version = {}\nicon.filename = {}".format(project.version,icon.name));
     if orientation in ("auto","sensor"): spec=spec.replace("fullscreen = 0","orientation = all\nfullscreen = 0");
     else: spec=spec.replace("fullscreen = 0","orientation = {}\nfullscreen = 0".format(orientation));
     (directory / "buildozer.spec").write_text(spec,encoding="utf-8");

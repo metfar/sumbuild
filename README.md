@@ -86,7 +86,7 @@ The mobile editor accessory bar now defaults to 92-pixel-high buttons per row an
 Corrected the Android SUM keybar Spectrum-style arrow geometry. The triangular head now widens from tip to base, producing proper robust cursor arrows instead of torch-like shapes.
 
 
-## 0.1.0a13
+## 0.1.0a14
 
 Android accessory keys now implement press/repeat/release semantics for held navigation/editing keys.
 The default touch repeat is 400 ms initial delay and 55 ms interval, configurable under
@@ -94,7 +94,7 @@ The default touch repeat is 400 ms initial delay and 55 ms interval, configurabl
 modifier state is captured for the entire hold so combinations such as Ctrl+Right repeat correctly.
 Dragging off a held key cancels it with a release event. Physical SDL keyboard repeat remains native.
 
-### 0.1.0a13 responsive Android text scale
+### 0.1.0a14 responsive Android text scale
 
 The Android SUM GUI backend now supports `interface.font_size = "auto"`.  Auto mode
 selects font size from the physical SDL renderer dimensions and a target terminal
@@ -107,3 +107,7 @@ not independently shrink the font; it changes the usable rows instead.
 The Android accessory keybar can likewise use `accessory_button_height = "auto"`;
 its touch height follows the resolved font size, so tablet controls do not become
 proportionally tiny while phone controls retain approximately the a12 dimensions.
+
+### 0.1.0a14 default SUM launcher icon
+
+Android builds now use the project-owned `Σ` SUM icon by default. `interface.icon` accepts `"sum"`/`"auto"` for the generated default, `false`/`"none"` to suppress it, or a project-relative image path for an application-specific icon. The p4a backend emits `--icon=...`; Buildozer receives `icon.filename`.

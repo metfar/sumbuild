@@ -46,7 +46,8 @@
       "landscape_columns": 80,
       "min_px": 22,
       "max_px": 64
-    }
+    },
+    "icon": "sum"
   },
   "build": {
     "targets": [
