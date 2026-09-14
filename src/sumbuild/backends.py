@@ -55,7 +55,7 @@ SUM_ANDROID_PYTHON_VERSION="3.13.13";
 SUM_ANDROID_NUMPY_VERSION="2.2.3";
 SUM_ANDROID_PANDAS_VERSION="2.2.3";
 SUM_ANDROID_MATPLOTLIB_VERSION="3.10.1";
-SUM_P4A_PROFILE_REVISION="a37-entrypoint-storage-exit-1";
+SUM_P4A_PROFILE_REVISION="a38-api36-output-capture-summary-1";
 SUM_P4A_SOURCE_CACHE_REVISION="sources-v1";
 
 SUM_ANDROID_CORE_REQUIREMENTS=(
@@ -432,7 +432,7 @@ def _first_existing(paths):
 def _android_environment(project):
     """Resolve a coherent Android toolchain without requiring shell exports.""";
     settings=_android_settings(project);
-    android_api=int(settings.get("api",33));
+    android_api=int(settings.get("api",36));
     ndk_api=int(settings.get("ndk_api",24));
 
     sdk_candidates=[
@@ -499,8 +499,10 @@ def _android_environment(project):
         "sdk":str(sdk),
         "ndk":str(ndk),
         "android_api":android_api,
+        "min_api":ndk_api,
         "ndk_api":ndk_api,
         "java_home":str(java_home),
+        "arch":str(settings.get("arch","arm64-v8a")),
     };
     return env,summary;
 
@@ -522,6 +524,8 @@ def _patch_android_sumtui_storage(vendor):
     edit=Path(vendor) / "sumtui" / "tools" / "edit.py";
     if not edit.exists(): return False;
     text=edit.read_text(encoding="utf-8");
+    if "def _editor_private_home():" in text and "def _file_dialog_quick_paths(self):" in text:
+        return True;
     marker='_EOL_MARKERS = {"\\n": "↵", "\\r\\n": "⏎", "\\r": "↩"};';
     helper=(
         '\n\ndef _sum_storage_path(name, fallback=None):\n'
@@ -1123,7 +1127,7 @@ def _p4a_profile_storage(project, requirements, arch):
         root=Path(str(configured)).expanduser();
         if not root.is_absolute(): root=(project.root / root);
         return root.resolve();
-    api=str(settings.get("api",os.environ.get("ANDROIDAPI",33)));
+    api=str(settings.get("api",os.environ.get("ANDROIDAPI",36)));
     ndk_api=str(settings.get("ndk_api",os.environ.get("NDKAPI",24)));
     normalized=sorted(_canonical_android_requirement(item) for item in requirements);
     matrix=",".join("{}={}".format(key,value) for key,value in sorted(_android_recipe_version_overrides().items()));
@@ -1506,7 +1510,7 @@ def prepare_android(project, directory=None, backend=None, details=False):
     (directory / "sum-android.json").write_text(__import__("json").dumps(runtime,indent=2,ensure_ascii=False)+"\n",encoding="utf-8");
     if selected == "p4a":
         storage=_p4a_profile_storage(project,requirements,arch);
-        record_profile(storage,{"profile_revision":SUM_P4A_PROFILE_REVISION,"requirements":requirements,"arch":arch,"api":str(settings.get("api",os.environ.get("ANDROIDAPI",33))),"ndk_api":str(settings.get("ndk_api",os.environ.get("NDKAPI",24))),"project":project.name});
+        record_profile(storage,{"profile_revision":SUM_P4A_PROFILE_REVISION,"requirements":requirements,"arch":arch,"api":str(settings.get("api",os.environ.get("ANDROIDAPI",36))),"ndk_api":str(settings.get("ndk_api",os.environ.get("NDKAPI",24))),"project":project.name});
         local_recipes=_write_android_local_recipes(directory,requirements);
         command=_p4a_launcher()+["apk","--private",str(directory),"--package={}".format(package),"--name={}".format(project.name),"--version={}".format(project.version),"--bootstrap=sdl2","--requirements={}".format(",".join(requirements)),"--arch={}".format(arch),"--storage-dir={}".format(storage)];
         if local_recipes is not None: command.append("--local-recipes={}".format(local_recipes));
@@ -1526,7 +1530,7 @@ def prepare_android(project, directory=None, backend=None, details=False):
         else: command.append("--orientation={}".format(orientation));
         result=(directory,command,selected,stage);
         return result if details else result[:2];
-    spec="""[app]\ntitle = {title}\npackage.name = {package_name}\npackage.domain = {domain}\nsource.dir = .\nsource.include_exts = py,png,jpg,jpeg,gif,svg,json,txt,md,csv,rds,sum,bas,prg,R,yaml,yml\nversion = {version}\nrequirements = {requirements}\nfullscreen = 0\n\n[buildozer]\nlog_level = 2\nwarn_on_root = 1\n""".format(title=project.name,package_name=package_name,domain=domain,version=project.version,requirements=",".join(requirements));
+    spec="""[app]\ntitle = {title}\npackage.name = {package_name}\npackage.domain = {domain}\nsource.dir = .\nsource.include_exts = py,png,jpg,jpeg,gif,svg,json,txt,md,csv,rds,sum,bas,prg,R,yaml,yml\nversion = {version}\nrequirements = {requirements}\nandroid.api = {android_api}\nandroid.minapi = {ndk_api}\nandroid.ndk_api = {ndk_api}\nfullscreen = 0\n\n[buildozer]\nlog_level = 2\nwarn_on_root = 1\n""".format(title=project.name,package_name=package_name,domain=domain,version=project.version,requirements=",".join(requirements),android_api=int(settings.get("api",36)),ndk_api=int(settings.get("ndk_api",24)));
     if icon is not None: spec=spec.replace("version = {}".format(project.version),"version = {}\nicon.filename = {}".format(project.version,icon.name));
     if presplash is not None: spec=spec.replace("fullscreen = 0","presplash.filename = {}\npresplash.color = #0000CD\nfullscreen = 0".format(presplash.name));
     if permissions: spec=spec.replace("requirements = {}".format(",".join(requirements)),"requirements = {}\nandroid.permissions = {}".format(",".join(requirements),", ".join(permissions)));

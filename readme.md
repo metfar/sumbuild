@@ -1,6 +1,6 @@
 # sumBuild
 
-`sumBuild` packages SUM projects and builds Linux executables or Android APKs. The current release is **0.1.0a37**. The Android backend defaults to `python-for-android` and keeps toolchain discovery local-first: existing SDK, NDK, API and Java settings are respected instead of installing or replacing toolchains behind the user's back.
+`sumBuild` packages SUM projects and builds Linux executables or Android APKs. The current release is **0.1.0a38**. The Android backend defaults to `python-for-android` and keeps toolchain discovery local-first: existing SDK, NDK, API and Java settings are respected instead of installing or replacing toolchains behind the user's back.
 
 ## Install
 
@@ -12,7 +12,7 @@ hash -r
 sumbuild --version
 ```
 
-The final command should report `sumbuild 0.1.0a37`.
+The final command should report `sumbuild 0.1.0a38`.
 
 ## Quick builds
 
@@ -58,7 +58,7 @@ Standalone APKs do not normally disappear when the packaged program reaches `END
 - **Exit** — close the APK.
 - **Debug** — show the complete captured diagnostic stream.
 
-The normal view shows stdout, inherited command/subprocess output, and critical failures. Non-critical stderr is retained but hidden until Debug view. The capture occurs at the process file-descriptor level, so output written below Python's `sys.stdout`/`sys.stderr` wrappers is retained as well.
+The normal view shows stdout, inherited command/subprocess output, and critical failures. Non-critical stderr is retained but hidden until Debug view. Capture is hybrid: file descriptors 1/2 retain native and subprocess output, while Python-level `sys.stdout`/`sys.stderr` wrappers retain output that python-for-android routes through logcat instead of the Unix descriptors.
 
 Build with full runtime diagnostics using:
 
@@ -74,13 +74,17 @@ sumbuild --main program.py --target Android --force-end
 
 `--debug --force-end` remains valid: diagnostics are emitted/captured during execution, but no final browser is opened.
 
-## Android a37 fixes
+## Android a38 release-candidate fixes
 
 The Android Python launcher embeds the entry source in the generated bootstrap instead of assuming that a sibling source file will be present at `/data/user/.../files/app/`. This removes the startup failure observed in `science_stack` and `sumedit` when the runtime could not find the staged entrypoint. Tracebacks still use the original logical filename.
 
 SUM IDE Android runs now dismiss the completion modal when **Debug** is selected, leaving the output visible while restoring interaction with the IDE. New/unsaved documents default consistently to the application's private writable directory for both Open and Save. External shared-storage integration remains a separate Android storage concern.
 
 The `sumgui.easy` Android lowering now adds a visible **EXIT** control at the lower-right edge of the application content, matching the established SUM keyboard convention and remaining inside the app area rather than the Android IME area.
+
+Android builds target **API 36** by default while retaining minimum/NDK API 24. `sumbuild --doctor` reports whether the API 36 platform is installed. This keeps broad runtime compatibility while avoiding the obsolete-target warning produced by current Android for API 33 packages.
+
+Every build ends with a readable **Build summary** containing the selected backend/version, target/runtime versions, artifact path, size, SHA-256 for file artifacts, elapsed time and final status. The JSON build result remains on stdout for tooling; the human summary is emitted after the build diagnostics.
 
 ## Cache profiles
 

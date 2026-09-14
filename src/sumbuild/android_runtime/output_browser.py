@@ -120,9 +120,50 @@ class OutputRecord:
         return rows;
 
 
+class _StreamTee:
+    """Mirror a Python-level stream into the output record without hiding it.""";
+    def __init__(self,record,name,original):
+        self.record=record; self.name=str(name); self.original=original;
+
+    def write(self,text):
+        value=str(text or "");
+        if not value: return 0;
+        try: result=self.original.write(value);
+        except Exception: result=None;
+        self.record.add(self.name,value,False);
+        return len(value) if result is None else result;
+
+    def flush(self):
+        try: return self.original.flush();
+        except Exception: return None;
+
+    def fileno(self):
+        return self.original.fileno();
+
+    def isatty(self):
+        try: return bool(self.original.isatty());
+        except Exception: return False;
+
+    @property
+    def encoding(self):
+        return getattr(self.original,"encoding","utf-8");
+
+    @property
+    def errors(self):
+        return getattr(self.original,"errors","replace");
+
+    def __getattr__(self,name):
+        return getattr(self.original,name);
+
+
+def _stream_uses_fd(stream,number):
+    try: return int(stream.fileno()) == int(number);
+    except Exception: return False;
+
+
 class _FDCapture:
     def __init__(self,record):
-        self.record=record; self.saved={}; self.pipes={}; self.threads=[];
+        self.record=record; self.saved={}; self.pipes={}; self.threads=[]; self.original_streams={};
 
     def _reader(self,fd,stream,saved_fd):
         decoder=codecs.getincrementaldecoder("utf-8")("replace");
@@ -142,7 +183,8 @@ class _FDCapture:
             except OSError: pass;
 
     def start(self):
-        for stream in (getattr(sys,"stdout",None),getattr(sys,"stderr",None)):
+        self.original_streams={"stdout":getattr(sys,"stdout",None),"stderr":getattr(sys,"stderr",None)};
+        for stream in self.original_streams.values():
             try: stream.flush();
             except Exception: pass;
         for number,name in ((1,"stdout"),(2,"stderr")):
@@ -150,12 +192,17 @@ class _FDCapture:
             self.saved[number]=saved; self.pipes[number]=(read_fd,write_fd);
             os.dup2(write_fd,number); os.close(write_fd);
             thread=threading.Thread(target=self._reader,args=(read_fd,name,saved),daemon=True); thread.start(); self.threads.append(thread);
+            original=self.original_streams.get(name);
+            if original is not None and not _stream_uses_fd(original,number):
+                setattr(sys,name,_StreamTee(self.record,name,original));
         return self;
 
     def stop(self):
         for stream in (getattr(sys,"stdout",None),getattr(sys,"stderr",None)):
             try: stream.flush();
             except Exception: pass;
+        for name,original in self.original_streams.items():
+            if original is not None: setattr(sys,name,original);
         for number,saved in list(self.saved.items()):
             try: os.dup2(saved,number);
             except OSError: pass;
@@ -163,7 +210,7 @@ class _FDCapture:
         for saved in self.saved.values():
             try: os.close(saved);
             except OSError: pass;
-        self.saved.clear(); return self.record;
+        self.saved.clear(); self.original_streams.clear(); return self.record;
 
 
 class _SDLBrowser:

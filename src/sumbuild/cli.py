@@ -21,11 +21,14 @@
 #  
 """sumbuild command line.""";
 import argparse;
+import hashlib;
+import importlib.metadata;
 import json;
 from pathlib import Path;
 import sys;
+import time;
 from . import __version__;
-from .backends import BuildError, build_android, build_host;
+from .backends import BuildError, SUM_ANDROID_PYTHON_VERSION, build_android, build_host;
 from .cache import format_profiles, format_sessions, kill_all_sessions, kill_session, remove_profiles;
 from .doctor import print_report, report;
 from .package import create_package, disassemble_package, inspect_package, unpack_package, verify_package;
@@ -113,6 +116,109 @@ def _doctor(as_json=False):
     return 2 if data["status"] == "failed" else (1 if data["status"] == "partial" else 0);
 
 
+def _format_bytes(size):
+    value=float(max(0,int(size)));
+    for suffix in ("B","KiB","MiB","GiB","TiB"):
+        if value < 1024.0 or suffix == "TiB":
+            return "{} {}".format(int(value),suffix) if suffix == "B" else "{:.1f} {}".format(value,suffix);
+        value/=1024.0;
+    return "{} B".format(int(size));
+
+
+def _artifact_size(path):
+    target=Path(path);
+    if target.is_file(): return target.stat().st_size;
+    if target.is_dir():
+        total=0;
+        for item in target.rglob("*"):
+            try:
+                if item.is_file(): total+=item.stat().st_size;
+            except OSError: pass;
+        return total;
+    return 0;
+
+
+def _artifact_sha256(path):
+    target=Path(path);
+    if not target.is_file(): return None;
+    digest=hashlib.sha256();
+    with target.open("rb") as handle:
+        while True:
+            block=handle.read(1024*1024);
+            if not block: break;
+            digest.update(block);
+    return digest.hexdigest();
+
+
+def _backend_version(name):
+    packages={"nuitka":"Nuitka","pyinstaller":"pyinstaller","p4a":"python-for-android","buildozer":"buildozer"};
+    package=packages.get(str(name or "").lower());
+    if not package: return "unknown";
+    try: return importlib.metadata.version(package);
+    except importlib.metadata.PackageNotFoundError: return "unknown";
+
+
+def _print_build_summary(project,target,result=None,elapsed=0.0,status="SUCCESS",error=None,prepare=False):
+    result=result or {}; target=str(target or "host").lower(); backend=str(result.get("backend") or "unknown");
+    lines=[];
+    lines.append("="*60);
+    lines.append("sumbuild {} - Build summary".format(__version__));
+    lines.append("="*60);
+    lines.append("Project        : {}".format(project.name));
+    lines.append("Version        : {}".format(project.version));
+    lines.append("Target         : {}".format("Android" if target == "android" else "Linux"));
+    lines.append("Backend        : {} {}".format(backend,_backend_version(backend)).rstrip());
+    lines.append("Host Python    : {}".format(sys.version.split()[0]));
+    if target == "android":
+        settings=dict(project.build.get("android",{}) or {}); toolchain=dict(result.get("toolchain",{}) or {});
+        lines.append("Target Python  : {}".format(SUM_ANDROID_PYTHON_VERSION));
+        lines.append("Build type     : {}".format(str(settings.get("mode","debug"))));
+        lines.append("Android API    : {}".format(toolchain.get("android_api",settings.get("api",36))));
+        lines.append("Minimum API    : {}".format(toolchain.get("min_api",settings.get("ndk_api",24))));
+        lines.append("NDK API        : {}".format(toolchain.get("ndk_api",settings.get("ndk_api",24))));
+        lines.append("Architecture   : {}".format(toolchain.get("arch",settings.get("arch","arm64-v8a"))));
+        ndk=toolchain.get("ndk");
+        if ndk: lines.append("NDK            : {}".format(Path(str(ndk)).name));
+    else:
+        lines.append("Layout         : {}".format(result.get("layout",dict(project.build.get("host",{}) or {}).get("layout","onefile"))));
+        environment=result.get("environment",{}) or {};
+        if environment.get("MPLBACKEND"): lines.append("Matplotlib     : {}".format(environment.get("MPLBACKEND")));
+    artifact=result.get("artifact");
+    if artifact:
+        size=_artifact_size(artifact); digest=_artifact_sha256(artifact);
+        lines.append("Artifact       : {}".format(artifact));
+        lines.append("Size           : {}".format(_format_bytes(size)));
+        if digest: lines.append("SHA-256        : {}".format(digest));
+    elif prepare:
+        lines.append("Artifact       : not built (--prepare)");
+    if result.get("p4a_storage"): lines.append("Cache profile  : {}".format(Path(result["p4a_storage"]).name));
+    lines.append("Build time     : {:.2f}s".format(float(elapsed)));
+    if error: lines.append("Error          : {}".format(error));
+    lines.append("Result         : {}".format("PREPARED" if prepare and status == "SUCCESS" else status));
+    lines.append("="*60);
+    print("\n".join(lines),file=sys.stderr);
+    return lines;
+
+
+def _execute_build(project,target,prepare=False,backend=None,layout=None):
+    started=time.monotonic();
+    try:
+        if target in ("host","linux"):
+            if not sys.platform.startswith("linux"): raise BuildError("Linux and Android are the active targets in this milestone");
+            result=build_host(project,prepare,backend,layout);
+        else:
+            result=build_android(project,prepare,backend);
+    except (ProjectError,BuildError,OSError,ValueError) as exc:
+        elapsed=time.monotonic()-started;
+        print("sumbuild: {}".format(exc),file=sys.stderr);
+        _print_build_summary(project,target,elapsed=elapsed,status="FAILED",error=exc,prepare=prepare);
+        return 2;
+    elapsed=time.monotonic()-started;
+    print(json.dumps(result,indent=2));
+    _print_build_summary(project,target,result=result,elapsed=elapsed,status="SUCCESS",prepare=prepare);
+    return 0;
+
+
 def _admin_action(args):
     if args.list_all: print(format_profiles("all")); return 0;
     if args.list_current: print(format_profiles("current")); return 0;
@@ -150,20 +256,12 @@ def main(argv=None):
         if args.main_file:
             project=project_from_main(args.main_file,name=args.shortcut_name,target=args.shortcut_target,backend=args.shortcut_backend,storage=args.shortcut_storage or "auto",debug=bool(args.shortcut_debug),force_end=bool(args.shortcut_force_end));
             target=args.shortcut_target;
-            if target in ("host","linux"):
-                if not sys.platform.startswith("linux"): raise BuildError("Linux and Android are the active targets in this milestone");
-                result=build_host(project,args.shortcut_prepare,args.shortcut_backend,args.shortcut_layout);
-            else: result=build_android(project,args.shortcut_prepare,args.shortcut_backend);
-            print(json.dumps(result,indent=2)); return 0;
+            return _execute_build(project,target,args.shortcut_prepare,args.shortcut_backend,args.shortcut_layout);
         alias_project=args.build_alias_project or args.project_alias_project;
         if alias_project:
             project=_project_with_build_overrides(alias_project,args.shortcut_name,args.shortcut_storage,args.shortcut_debug,args.shortcut_force_end);
             target=args.shortcut_target;
-            if target in ("host","linux"):
-                if not sys.platform.startswith("linux"): raise BuildError("Linux and Android are the active targets in this milestone");
-                result=build_host(project,args.shortcut_prepare,args.shortcut_backend,args.shortcut_layout);
-            else: result=build_android(project,args.shortcut_prepare,args.shortcut_backend);
-            print(json.dumps(result,indent=2)); return 0;
+            return _execute_build(project,target,args.shortcut_prepare,args.shortcut_backend,args.shortcut_layout);
         if not args.command: parser.print_help(); return 0;
         if args.command == "doctor": return _doctor(args.as_json);
         if args.command == "init":
@@ -183,11 +281,7 @@ def main(argv=None):
         if args.command == "disassemble": print(disassemble_package(args.package,args.directory)); return 0;
         if args.command == "build":
             project=_project_with_build_overrides(args.project,args.build_name,args.build_storage,args.build_debug,args.build_force_end);
-            if args.target in ("host","linux"):
-                if not sys.platform.startswith("linux"): raise BuildError("Linux and Android are the active targets in this milestone");
-                result=build_host(project,args.prepare,args.backend,args.build_layout);
-            else: result=build_android(project,args.prepare,args.backend);
-            print(json.dumps(result,indent=2)); return 0;
+            return _execute_build(project,args.target,args.prepare,args.backend,args.build_layout);
     except (ProjectError,BuildError,OSError,ValueError) as exc:
         print("sumbuild: {}".format(exc),file=sys.stderr); return 2;
     return 0;

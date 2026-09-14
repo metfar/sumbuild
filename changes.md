@@ -1,3 +1,26 @@
+# sumBuild 0.1.0a38
+
+This alpha is the release-candidate cleanup after the first a37 device tests.
+
+## Android target and runtime output
+
+- Android now targets API 36 by default while retaining minimum/NDK API 24. This removes the obsolete-target warning raised by current Android for API 33 APKs.
+- Buildozer staging writes the same explicit API 36 / minimum API 24 policy.
+- `sumbuild --doctor` reports whether the Android API 36 SDK platform is installed.
+- The standalone Android output browser now captures both process file descriptors and Python-level `sys.stdout` / `sys.stderr` streams. This covers python-for-android streams that route `print()` through logcat instead of fd 1/2, while still retaining native/subprocess output.
+- Non-critical stderr remains hidden in normal review and is visible in Debug; critical failures remain visible in normal mode.
+
+## Build summary
+
+- Every actual build now ends with a human-readable Build summary while keeping the existing JSON result on stdout.
+- The summary includes project/version, target, backend/version, Python version, layout or Android build type, Android/NDK API and architecture where applicable, artifact path, human-readable size, SHA-256 for file artifacts, cache profile, elapsed time, and final result.
+- Failed builds also end with a summary containing the error and elapsed time.
+
+## Editor/runtime integration
+
+- Android staging recognizes the new common sumTUI storage-aware editor behavior instead of injecting the older Open/Save path patch when sumTUI 0.8.0a21 or newer is present.
+- The existing a37 entrypoint embedding, onefile/onedir host terminology, Qt opt-out, cache/session administration and lower-right GUI Exit control remain in place.
+
 # sumBuild 0.1.0a37
 
 This alpha consolidates the host Nuitka path and the Android fixes found during real-device testing of a36.

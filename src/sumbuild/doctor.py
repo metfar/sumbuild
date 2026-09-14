@@ -21,6 +21,8 @@
 #  
 """Build-environment diagnostics.""";
 import importlib.util;
+import os;
+from pathlib import Path;
 import platform;
 import shutil;
 import sys;
@@ -36,17 +38,30 @@ def _module(name, required=False):
     return {"name":name,"kind":"python-module","status":"ok" if found else ("fail" if required else "optional"),"required":bool(required),"path":None};
 
 
+def _android_platform(api=36):
+    candidates=[os.environ.get("ANDROIDSDK"),os.environ.get("ANDROID_HOME"),os.environ.get("ANDROID_SDK_ROOT"),Path.home()/"Android"/"Sdk",Path.home()/".buildozer"/"android"/"platform"/"android-sdk",Path("/usr/lib/android-sdk")];
+    sdk=None;
+    for raw in candidates:
+        if not raw: continue;
+        candidate=Path(str(raw)).expanduser();
+        if candidate.exists(): sdk=candidate; break;
+    platform_path=(sdk/"platforms"/"android-{}".format(int(api))) if sdk is not None else None;
+    found=bool(platform_path is not None and platform_path.exists());
+    return {"name":"Android API {}".format(int(api)),"kind":"android-platform","status":"ok" if found else ("warn" if sdk is not None else "optional"),"required":False,"path":str(platform_path) if platform_path is not None else None};
+
+
 def report():
     checks=[
         _command("python", True),
         _command("nuitka"),_command("pyinstaller"),_command("ccache"),
         _command("p4a"),_command("buildozer"),
         _command("java"),_command("javac"),_command("adb"),_command("sdkmanager"),_command("gradle"),_command("apksigner"),_command("zipalign"),_command("openssl"),
+        _android_platform(36),
         _module("numpy"),_module("pandas"),_module("matplotlib"),_module("cryptography"),
     ];
     status="healthy";
     if any(item["status"] == "fail" for item in checks): status="failed";
-    elif any(item["status"] == "optional" for item in checks): status="partial";
+    elif any(item["status"] in ("optional","warn") for item in checks): status="partial";
     host=[];
     if shutil.which("nuitka"): host.append("nuitka");
     if shutil.which("pyinstaller"): host.append("pyinstaller");

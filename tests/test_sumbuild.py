@@ -501,7 +501,7 @@ def test_a28_full_runtime_core_requirements_keep_git_recipes_unversioned():
 
 def test_a28_profile_revision_and_recipe_tag_overrides():
     from sumbuild.backends import SUM_P4A_PROFILE_REVISION;
-    assert SUM_P4A_PROFILE_REVISION.startswith("a37-");
+    assert SUM_P4A_PROFILE_REVISION.startswith("a38-");
     import sumbuild.backends as backends;
     overrides=backends._android_recipe_version_overrides();
     assert overrides["VERSION_numpy"] == "v2.2.3";
@@ -744,7 +744,7 @@ def test_a35_android_requirement_maps_to_pyjnius_and_private_shim_is_staged(tmp_
 
 def test_a35_bumps_profile_to_avoid_reusing_android_recipe_dist():
     from sumbuild.backends import SUM_P4A_PROFILE_REVISION;
-    assert SUM_P4A_PROFILE_REVISION == "a37-entrypoint-storage-exit-1";
+    assert SUM_P4A_PROFILE_REVISION == "a38-api36-output-capture-summary-1";
 
 
 def test_a35_p4a_launcher_prefers_active_python_environment(monkeypatch):
@@ -838,7 +838,7 @@ def test_a36_docs_are_consolidated_and_readme_ends_cleanly():
     assert not list(root.glob("README-a*.md"));
     text=(root/"readme.md").read_text(encoding="utf-8").rstrip();
     assert text.endswith('<p align=center><b>- oOo -</b></p>');
-    assert "0.1.0a37" in text;
+    assert "0.1.0a38" in text;
 
 
 def test_a36_sumbasic_force_end_and_three_actions_are_staged():
@@ -930,3 +930,63 @@ def test_a37_sumgui_easy_has_visible_exit_button(tmp_path):
     assert 'def _exit_button():' in text;
     assert '_text(renderer,"EXIT"' in text;
     assert 'pressed="exit"' in text;
+
+
+def test_a38_python_stream_tee_captures_python_level_output():
+    import io;
+    from sumbuild.android_runtime.output_browser import OutputRecord, _StreamTee;
+    record=OutputRecord(debug=False); original=io.StringIO(); tee=_StreamTee(record,"stdout",original);
+    assert tee.write("hello from python\n") == len("hello from python\n");
+    assert original.getvalue() == "hello from python\n";
+    normal="\n".join(row[1] for row in record.lines(False));
+    assert "hello from python" in normal;
+
+
+def test_a38_android_defaults_to_api36_and_min24(tmp_path):
+    import json;
+    import sumbuild.backends as backends;
+    root=tmp_path / "demo"; root.mkdir(); (root / "main.py").write_text("print(1)\n",encoding="utf-8");
+    sdk=tmp_path / "sdk"; (sdk / "platforms" / "android-36").mkdir(parents=True);
+    ndk=tmp_path / "android-ndk-r25b"; ndk.mkdir();
+    java=tmp_path / "java-17"; (java / "bin").mkdir(parents=True);
+    (root / "project.sum").write_text(json.dumps({"sum_project":1,"name":"demo","entrypoint":"main.py","language":"python","sources":["main.py"],"build":{"android":{"backend":"p4a","sdk_dir":str(sdk),"ndk_dir":str(ndk),"java_home":str(java)}}}),encoding="utf-8");
+    project=SumProject.load(root);
+    env,toolchain=backends._android_environment(project);
+    assert env["ANDROIDAPI"] == "36";
+    assert env["NDKAPI"] == "24";
+    assert toolchain["android_api"] == 36;
+    assert toolchain["min_api"] == 24;
+
+
+def test_a38_buildozer_spec_declares_api36_min24(tmp_path,monkeypatch):
+    import json;
+    import sumbuild.backends as backends;
+    root=tmp_path / "demo"; root.mkdir(); (root / "main.py").write_text("print(1)\n",encoding="utf-8");
+    (root / "project.sum").write_text(json.dumps({"sum_project":1,"name":"demo","entrypoint":"main.py","language":"python","sources":["main.py"],"build":{"android":{"backend":"buildozer","requirements":["python3","sdl2"]}}}),encoding="utf-8");
+    monkeypatch.setattr(backends,"_stage_python_sum_runtime",lambda project,directory: None);
+    directory,command=backends.prepare_android(root,backend="buildozer");
+    spec=(directory / "buildozer.spec").read_text(encoding="utf-8");
+    assert "android.api = 36" in spec;
+    assert "android.minapi = 24" in spec;
+    assert "android.ndk_api = 24" in spec;
+
+
+def test_a38_build_summary_contains_size_hash_and_result(tmp_path,capsys):
+    from sumbuild.cli import _print_build_summary;
+    root=tmp_path / "demo"; project=SumProject.create(root,"demo"); (root / "main.py").write_text("print(1)\n",encoding="utf-8");
+    artifact=root / "dist" / "demo.run"; artifact.parent.mkdir(); artifact.write_bytes(b"demo");
+    _print_build_summary(project,"linux",{"backend":"nuitka","layout":"onefile","artifact":str(artifact)},elapsed=1.25,status="SUCCESS");
+    text=capsys.readouterr().err;
+    assert "Build summary" in text;
+    assert "Size" in text and "4 B" in text;
+    assert "SHA-256" in text;
+    assert "Result         : SUCCESS" in text;
+
+
+def test_a38_docs_mention_api36_and_hybrid_output_capture():
+    root=Path(__file__).resolve().parents[1];
+    readme=(root / "readme.md").read_text(encoding="utf-8"); changes=(root / "changes.md").read_text(encoding="utf-8");
+    assert "0.1.0a38" in readme;
+    assert "API 36" in changes;
+    assert "sys.stdout" in changes and "sys.stderr" in changes;
+    assert readme.rstrip().endswith('<p align=center><b>- oOo -</b></p>');
