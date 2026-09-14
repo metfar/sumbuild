@@ -642,6 +642,8 @@ class SumBasicIDE(ScriptIDE):
             self._run_thread = None;
             with self._run_lock:
                 self._run_finished = False;
+            if not self.basic_interpreter.stopped_by_statement and not self.basic_interpreter.stopped_by_request and os.environ.get("SUM_FORCE_END", "").strip() == "1":
+                return self._quit_now();
             if error is None and not self.basic_interpreter.stopped_by_statement and not self.basic_interpreter.stopped_by_request and os.environ.get("SUM_STANDALONE_RUN", "").strip() == "1" and not self.app.modal_depth:
                 self.output_window.maximize(); self.workspace.show(self.output_window); self.workspace.activate(self.output_window);
                 def _standalone_restart(*_args):
@@ -650,10 +652,14 @@ class SumBasicIDE(ScriptIDE):
                     return self.run_program();
                 def _standalone_exit(*_args):
                     self.app.pop_modal(); self.app.stop(); return True;
-                restart=Button("Reiniciar",on_press=_standalone_restart,default=True);
-                leave=Button("Salir",on_press=_standalone_exit);
-                body=VBox(Label("Terminado"),HBox(restart,leave,sizes=[None,None]),sizes=[1,None]);
-                self.app.push_modal(Dialog(body,title="Terminado",width=52,height=7,on_cancel=_standalone_exit));
+                def _standalone_debug(*_args):
+                    mode="full" if os.environ.get("SUM_RUNTIME_DEBUG", "").strip() == "1" else "critical-only";
+                    self.app.pop_modal(); self._update_status("Debug output mode: {}".format(mode)); self.workspace.show(self.output_window); self.workspace.activate(self.output_window); self.app.invalidate(); return True;
+                restart=Button("Restart Program",on_press=_standalone_restart,default=True);
+                leave=Button("Exit",on_press=_standalone_exit);
+                debug=Button("Debug",on_press=_standalone_debug);
+                body=VBox(Label("Program finished"),HBox(restart,leave,debug,sizes=[None,None,None]),sizes=[1,None]);
+                self.app.push_modal(Dialog(body,title="Program output",width=72,height=7,on_cancel=_standalone_exit));
                 self.app.focus.set(restart);
             return True;
         return input_dirty or dirty or graphics_dirty;

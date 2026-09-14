@@ -145,7 +145,7 @@ def _main_source_profile(path,language):
     return "generic";
 
 
-def project_from_main(path,name=None,target="host",backend=None,storage="auto"):
+def project_from_main(path,name=None,target="host",backend=None,storage="auto",debug=False,force_end=False):
     """Create an in-memory project for the zero-manifest --main workflow.""";
     source=Path(path).expanduser().resolve();
     if not source.is_file(): raise ProjectError("main source not found: {}".format(source));
@@ -180,8 +180,8 @@ def project_from_main(path,name=None,target="host",backend=None,storage="auto"):
         },
         "build":{
             "targets":[target],"console":True,
-            "host":{"backend":backend or "auto","bundle":"sum-full"},
-            "android":{"backend":backend or ("p4a" if target == "android" else "auto"),"requirements":runtime_requirements[language],"storage_access":storage,"runtime":runtime_value,"bundle":"sum-full","standalone":True},
+            "host":{"backend":backend or "auto","bundle":("sum-full" if (profile == "sumide" or language != "python") else "auto")},
+            "android":{"backend":backend or ("p4a" if target == "android" else "auto"),"requirements":runtime_requirements[language],"storage_access":storage,"runtime":runtime_value,"bundle":"sum-full","standalone":True,"runtime_debug":bool(debug),"force_end":bool(force_end)},
         },
     };
     return SumProject(source.parent,data);

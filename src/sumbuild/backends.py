@@ -33,6 +33,7 @@ import importlib.metadata;
 import hashlib;
 from .project import SumProject;
 from .transpile import TranspileError, transpile_sumgui_easy;
+from .cache import attach_builder, finish_session, kill_session, record_profile, register_session;
 
 
 class BuildError(RuntimeError):
@@ -54,11 +55,11 @@ SUM_ANDROID_PYTHON_VERSION="3.13.13";
 SUM_ANDROID_NUMPY_VERSION="2.2.3";
 SUM_ANDROID_PANDAS_VERSION="2.2.3";
 SUM_ANDROID_MATPLOTLIB_VERSION="3.10.1";
-SUM_P4A_PROFILE_REVISION="a32-android-lifecycle-storage-1";
+SUM_P4A_PROFILE_REVISION="a37-entrypoint-storage-exit-1";
 SUM_P4A_SOURCE_CACHE_REVISION="sources-v1";
 
 SUM_ANDROID_CORE_REQUIREMENTS=(
-    "python3","sdl2","android","rich","pygments","markdown-it-py","mdurl","markdown","markdownify",
+    "python3","sdl2","pyjnius","rich","pygments","markdown-it-py","mdurl","markdown","markdownify",
     "numpy","pandas","matplotlib",
 );
 
@@ -123,6 +124,13 @@ def _host_runtime_entry(project,directory):
 
 
 def _host_full_bundle(project):
+    """Whether the build truly needs every SUM package forced into the bundle.
+
+    Ordinary Python applications now let the freezer follow the actual import
+    graph.  Full inclusion is reserved for editable/runtime applications such
+    as sumIDE and non-Python SUM language launchers that may import modules only
+    after the executable has started.
+    """;
     settings=_host_settings(project);
     bundle=str(settings.get("bundle","auto") or "auto").strip().lower();
     return bundle in ("sum-full","sum-runtime","full","sumide") or project.language in ("sumbasic","sumx","sumr","bash");
@@ -136,14 +144,49 @@ def _check_host_bundle_modules():
         raise BuildError("Linux full runtime needs installed packages: {}".format(", ".join(missing)));
 
 
+def _host_uses_qt(project):
+    qt_tokens=("pyqt5","pyqt6","pyside2","pyside6","qtpy");
+    values=[str(item).lower() for item in project.dependencies];
+    settings=_host_settings(project);
+    values.extend(str(item).lower() for item in settings.get("include_packages",[]) if isinstance(item,str));
+    if any(any(token in value for token in qt_tokens) for value in values): return True;
+    for source,_rel in project.iter_payload_paths():
+        if source.suffix.lower() != ".py": continue;
+        try: text=source.read_text(encoding="utf-8",errors="ignore").lower();
+        except OSError: continue;
+        if any(token in text for token in qt_tokens): return True;
+    return False;
+
+
+def _host_layout(project,override=None):
+    value=str(override or _host_settings(project).get("layout","onefile") or "onefile").strip().lower();
+    aliases={"single":"onefile","one-file":"onefile","dir":"onedir","one-dir":"onedir","directory":"onedir"};
+    value=aliases.get(value,value);
+    if value not in ("onefile","onedir"): raise BuildError("host layout expects onefile or onedir");
+    return value;
+
+
+def _host_build_env(project,backend):
+    env=os.environ.copy();
+    if backend == "nuitka" and not _host_uses_qt(project): env.setdefault("MPLBACKEND","Agg");
+    return env;
+
+
 def _nuitka_bundle_flags(project):
-    flags=[];
-    if not _host_full_bundle(project): return flags;
-    _check_host_bundle_modules();
-    for package in SUM_ECOSYSTEM_PACKAGES + SUM_PYTHON_BASE_REQUIREMENTS:
-        flags.append("--include-package={}".format(package));
-    for package in ("rich","numpy","pandas","matplotlib"):
-        flags.append("--include-package-data={}".format(package));
+    flags=[]; settings=_host_settings(project);
+    if _host_full_bundle(project):
+        _check_host_bundle_modules();
+        for package in SUM_ECOSYSTEM_PACKAGES + SUM_PYTHON_BASE_REQUIREMENTS:
+            flags.append("--include-package={}".format(package));
+        for package in ("rich","numpy","pandas","matplotlib"):
+            flags.append("--include-package-data={}".format(package));
+    explicit=settings.get("include_packages",[]);
+    if explicit is None: explicit=[];
+    if not isinstance(explicit,list): raise BuildError("build.host.include_packages must be a list");
+    for package in explicit:
+        package=str(package).strip();
+        if package: flags.append("--include-package={}".format(package));
+    if not _host_uses_qt(project): flags.append("--enable-plugin=no-qt");
     return flags;
 
 
@@ -170,12 +213,13 @@ def _host_payload_data_flags(project,directory,backend):
     return flags;
 
 
-def prepare_host(project, directory=None, backend=None):
+def prepare_host(project, directory=None, backend=None, layout=None):
     if not isinstance(project, SumProject): project=SumProject.load(project);
     if not sys.platform.startswith("linux"):
         raise BuildError("Linux is the only active desktop target in this milestone; Android is the other active target");
     settings=_host_settings(project);
     backend=select_host_backend(backend or settings.get("backend", "auto"));
+    layout=_host_layout(project,layout);
     directory=Path(directory or (project.root / "build" / "linux" / backend)).resolve();
     if directory.exists(): shutil.rmtree(str(directory));
     directory.mkdir(parents=True,exist_ok=True);
@@ -183,46 +227,73 @@ def prepare_host(project, directory=None, backend=None):
     dist=project.root / "dist"; dist.mkdir(parents=True, exist_ok=True);
     console=bool(project.build.get("console", True));
     if backend == "nuitka":
-        command=["nuitka","--onefile","--assume-yes-for-downloads","--output-dir={}".format(dist),"--output-filename={}".format(project.name)];
+        mode="--onefile" if layout == "onefile" else "--standalone";
+        command=["nuitka",mode,"--assume-yes-for-downloads","--output-dir={}".format(dist),"--output-filename={}".format(project.name)];
         command.extend(_nuitka_bundle_flags(project));
         command.extend(_host_payload_data_flags(project,directory,backend));
         command.append(str(entry));
     else:
-        command=["pyinstaller","--noconfirm","--clean","--onefile","--name",project.name,"--distpath",str(dist),"--workpath",str(directory / ".pyinstaller"),"--specpath",str(directory)];
+        command=["pyinstaller","--noconfirm","--clean","--name",project.name,"--distpath",str(dist),"--workpath",str(directory / ".pyinstaller"),"--specpath",str(directory)];
+        if layout == "onefile": command.append("--onefile");
         command.extend(_pyinstaller_bundle_flags(project));
         command.extend(_host_payload_data_flags(project,directory,backend));
         if not console: command.append("--noconsole");
         command.append(str(entry));
     return directory, command, backend;
 
-def _host_artifact(project, backend):
+def _host_artifact(project, backend, layout="onefile"):
     dist=project.root / "dist";
+    if layout == "onedir":
+        candidates=[dist / (project.name + ".dist"), dist / project.name];
+        for candidate in candidates:
+            if candidate.is_dir(): return candidate;
+        matches=sorted((item for item in dist.glob(project.name + "*") if item.is_dir()),key=lambda item:item.stat().st_mtime,reverse=True);
+        return matches[0] if matches else candidates[0];
     names=[project.name];
     if sys.platform.startswith("win"): names=[project.name + ".exe", project.name];
-    if backend == "nuitka":
-        names.extend([project.name + ".bin", project.name + ".exe"]);
+    if backend == "nuitka": names.extend([project.name + ".bin", project.name + ".exe"]);
     for name in names:
         candidate=dist / name;
         if candidate.exists(): return candidate;
-    matches=sorted(dist.glob(project.name + "*"), key=lambda item:item.stat().st_mtime, reverse=True);
+    matches=sorted((item for item in dist.glob(project.name + "*") if item.is_file()), key=lambda item:item.stat().st_mtime, reverse=True);
     return matches[0] if matches else dist / names[0];
 
 
-def build_host(project, prepare_only=False, backend=None):
+def _run_external_build(command,cwd,project,target,backend,env=None,profile_path=None):
+    session=register_session(project.root if isinstance(project,SumProject) else project,target,backend,profile_path=profile_path,command=command);
+    try:
+        process=subprocess.Popen(command,cwd=str(cwd),env=env,start_new_session=True);
+        session=attach_builder(session,process.pid);
+        try: returncode=process.wait();
+        except KeyboardInterrupt:
+            try: kill_session(session["session_id"]);
+            except (OSError,ValueError): pass;
+            raise;
+        if returncode != 0: raise subprocess.CalledProcessError(returncode,command);
+        return returncode;
+    finally: finish_session(session);
+
+
+def build_host(project, prepare_only=False, backend=None, layout=None):
     project=project if isinstance(project, SumProject) else SumProject.load(project);
-    directory, command, selected=prepare_host(project, backend=backend);
-    if prepare_only: return {"staging":str(directory),"backend":selected,"command":command,"artifact":None};
+    layout=_host_layout(project,layout);
+    directory, command, selected=prepare_host(project, backend=backend, layout=layout);
+    env=_host_build_env(project,selected);
+    prepared={"staging":str(directory),"backend":selected,"layout":layout,"command":command,"environment":{"MPLBACKEND":env.get("MPLBACKEND")} if selected == "nuitka" else {},"artifact":None};
+    if prepare_only: return prepared;
     executable=command[0];
     if not shutil.which(executable): raise BuildError("{} not found; run sumbuild --doctor, choose another --backend, or use --prepare".format(executable));
-    subprocess.run(command, cwd=str(directory), check=True);
-    raw=_host_artifact(project, selected);
+    try: _run_external_build(command,directory,project,"linux",selected,env=env);
+    except subprocess.CalledProcessError as exc: raise BuildError("{} build failed with exit status {}".format(selected,exc.returncode)) from exc;
+    raw=_host_artifact(project,selected,layout);
     if not raw.exists(): raise BuildError("{} finished but no host artifact was found".format(selected));
-    if sys.platform.startswith("linux"):
+    if layout == "onefile" and sys.platform.startswith("linux"):
         target=(project.root / "dist" / project.name).with_suffix(".run");
         if raw != target:
             if target.exists(): target.unlink();
             raw.rename(target); raw=target;
-    return {"staging":str(directory),"backend":selected,"command":command,"artifact":str(raw)};
+    prepared["artifact"]=str(raw);
+    return prepared;
 
 
 def _canonical_android_requirement(value):
@@ -282,10 +353,20 @@ def _pin_android_runtime_requirements(values):
         "pandas":"pandas",
         "matplotlib":"matplotlib",
     };
+    # SUM stages its own small ``android`` compatibility package in the private
+    # application tree.  Requesting p4a's recipe named ``android`` is both
+    # redundant and harmful with current p4a: it builds an obsolete extension
+    # through a PEP-517 isolated environment and can lose Cython there.
+    # pyjnius is the only compiled dependency needed by SUM's compatibility
+    # package, so translate legacy/project ``android`` requirements to it.
+    aliases={"android":"pyjnius"};
     result=[];
     for item in values:
         text=_canonical_android_requirement(item);
         name=_android_requirement_name(text);
+        if name in aliases:
+            text=aliases[name];
+            name=_android_requirement_name(text);
         if name in pins: text=pins[name];
         if text and text not in result: result.append(text);
     if any(_android_requirement_name(item) == "python3" for item in result):
@@ -513,6 +594,57 @@ def _patch_android_sumcore_audio(vendor):
     return True;
 
 
+def _stage_android_compat(directory):
+    """Stage the Android API subset SUM needs in the private app source.""";
+    root=Path(directory) / "android"; root.mkdir(parents=True,exist_ok=True);
+    header='#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n#pylint:disable=W0301\n#  \n#  Copyright 2018- William Martinez Bas <metfar@gmail.com>\n#  \n#  This program is free software; you can redistribute it and/or modify\n#  it under the terms of the GNU General Public License as published by\n#  the Free Software Foundation; either version 2 of the License, or\n#  (at your option) any later version.\n#  \n#  This program is distributed in the hope that it will be useful,\n#  but WITHOUT ANY WARRANTY; without even the implied warranty of\n#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n#  GNU General Public License for more details.\n#  \n#  You should have received a copy of the GNU General Public License\n#  along with this program; if not, write to the Free Software\n#  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,\n#  MA 02110-1301, USA.\n#  \n';
+    (root / "__init__.py").write_text(header+'"""SUM Android compatibility helpers.""";\n',encoding="utf-8");
+    storage=header+r'''"""Android storage paths exported by the python-for-android SDL bootstrap.""";
+import os;
+from pathlib import Path;
+
+
+def app_storage_path():
+    value=os.environ.get("ANDROID_PRIVATE", "").strip();
+    if value: return str(Path(value));
+    value=os.environ.get("ANDROID_ARGUMENT", "").strip();
+    if value: return str(Path(value) / ".sum-private");
+    return str(Path.cwd() / ".sum-private");
+
+
+def primary_external_storage_path():
+    for key in ("EXTERNAL_STORAGE","PRIMARY_STORAGE"):
+        value=os.environ.get(key, "").strip();
+        if value: return str(Path(value));
+    return "/storage/emulated/0";
+
+
+def secondary_external_storage_path():
+    for key in ("SECONDARY_STORAGE","EXTERNAL_SDCARD_STORAGE"):
+        value=os.environ.get(key, "").strip();
+        if value: return str(Path(value));
+    return None;
+''';
+    (root / "storage.py").write_text(storage,encoding="utf-8");
+    loading=header+r'''"""Dismiss p4a's SDL loading screen after SUM presents its first frame.""";
+
+
+def hide_loading_screen():
+    from jnius import autoclass;
+    activity=autoclass("org.kivy.android.PythonActivity").mActivity;
+    if activity is not None: activity.removeLoadingScreen();
+''';
+    (root / "loadingscreen.py").write_text(loading,encoding="utf-8");
+    return root;
+
+
+def _stage_android_output_browser(directory):
+    source=Path(__file__).resolve().parent / "android_runtime" / "output_browser.py";
+    if not source.exists(): raise BuildError("Android output browser runtime template is missing");
+    target=Path(directory) / "sum_android_output.py"; shutil.copy2(str(source),str(target));
+    return target;
+
+
 def _stage_python_sum_runtime(project,directory):
     settings=_android_settings(project);
     runtime=str(settings.get("runtime","") or "").strip().lower();
@@ -544,16 +676,18 @@ def _stage_python_sum_runtime(project,directory):
         wrapper=common + 'from sumide.app import main;\nraise SystemExit(main(["--gui"]));\n';
         adapter="sumide-gui";
     else:
+        _stage_android_output_browser(directory);
         entry=Path(directory) / project.entrypoint;
         staged_name=project.entrypoint;
         if project.entrypoint == "main.py":
             staged_name="_sum_app_main.py";
             shutil.copy2(str(entry),str(Path(directory) / staged_name));
-        wrapper=(common + 'import runpy;\nrunpy.run_path(str(ROOT / {entry!r}), run_name="__main__");\n').format(entry=staged_name);
-        adapter="sum-full-app";
+        debug=bool(settings.get("runtime_debug",False)); force_end=bool(settings.get("force_end",False));
+        source_text=entry.read_text(encoding="utf-8");
+        wrapper=(common + 'from sum_android_output import run_source;\n_SOURCE={source!r};\nraise SystemExit(run_source(_SOURCE,filename=str(ROOT / {entry!r}),debug={debug!r},force_end={force!r},title={title!r}));\n').format(source=source_text,entry=project.entrypoint,debug=debug,force=force_end,title=project.name);
+        adapter="sum-full-app-output-browser";
     (Path(directory) / "main.py").write_text(wrapper,encoding="utf-8");
-    return {"runtime":runtime,"packages":packages,"adapter":adapter,"storage_root":"android-private+shared"};
-
+    return {"runtime":runtime,"packages":packages,"adapter":adapter,"storage_root":"android-private+shared","runtime_debug":bool(settings.get("runtime_debug",False)),"force_end":bool(settings.get("force_end",False))};
 
 def _patch_android_sumide_shell(vendor):
     """Run the SUM shell profile through Android's guaranteed system sh.
@@ -606,11 +740,15 @@ def _patch_android_sumide_runtime(vendor):
         '                    return self.run_program();\n'
         '                def _standalone_exit(*_args):\n'
         '                    self.app.pop_modal(); self.app.stop(); return True;\n'
-        '                restart=Button("Reiniciar", on_press=_standalone_restart, default=True);\n'
-        '                leave=Button("Salir", on_press=_standalone_exit);\n'
-        '                buttons=HBox(restart,leave,sizes=[None,None]);\n'
-        '                body=VBox(Label("Terminado"),buttons,sizes=[1,None]);\n'
-        '                self.app.push_modal(Dialog(body,title="Terminado",width=52,height=7,on_cancel=_standalone_exit));\n'
+        '                def _standalone_debug(*_args):\n'
+        '                    mode="full" if os.environ.get("SUM_RUNTIME_DEBUG", "").strip() == "1" else "critical-only";\n'
+        '                    self.app.pop_modal(); self._update_status("Debug output mode: {}".format(mode)); self.workspace.show(self.output_window); self.workspace.activate(self.output_window); self.app.invalidate(); return True;\n'
+        '                restart=Button("Restart Program", on_press=_standalone_restart, default=True);\n'
+        '                leave=Button("Exit", on_press=_standalone_exit);\n'
+        '                debug=Button("Debug", on_press=_standalone_debug);\n'
+        '                buttons=HBox(restart,leave,debug,sizes=[None,None,None]);\n'
+        '                body=VBox(Label("Program finished"),buttons,sizes=[1,None]);\n'
+        '                self.app.push_modal(Dialog(body,title="Program output",width=72,height=7,on_cancel=_standalone_exit));\n'
         '                self.app.focus.set(restart);\n'
     );
     if old_a32 in text:
@@ -638,7 +776,7 @@ def _patch_android_sumide_runtime(vendor):
     if '_sum_android_private_dir' not in text and marker in text:
         text=text.replace(marker,helper+'\n\n'+marker,1); changed=True;
     replacements={
-        'start = self.document.path.parent if self.document.path is not None else Path.cwd();':'start = self.document.path.parent if self.document.path is not None else _sum_android_shared_dir();',
+        'start = self.document.path.parent if self.document.path is not None else Path.cwd();':'start = self.document.path.parent if self.document.path is not None else _sum_android_private_dir();',
         'directory = self.document.path.parent if self.document.path is not None else Path.cwd();':'directory = _sum_android_work_dir(self.document.path);',
         'return Path.cwd() / ("untitled" + suffix);':'return _sum_android_private_dir() / ("untitled" + suffix);',
         'cwd = str(self.document.path.parent if self.document.path is not None else Path.cwd());':'cwd = str(_sum_android_work_dir(self.document.path));',
@@ -653,6 +791,8 @@ def _patch_android_sumide_runtime(vendor):
     old='            self._cleanup_process();\n            dirty = True;';
     new=(
         '            self._cleanup_process();\n'
+        '            if os.environ.get("SUM_FORCE_END", "").strip() == "1":\n'
+        '                self.app.stop(); return True;\n'
         '            if os.environ.get("SUM_STANDALONE_RUN", "").strip() == "1" and not self.app.modal_depth:\n'
         '                self.output_window.maximize(); self.workspace.show(self.output_window); self.workspace.activate(self.output_window);\n'
         '                def _standalone_restart(*_args):\n'
@@ -661,11 +801,15 @@ def _patch_android_sumide_runtime(vendor):
         '                    return self.run_program();\n'
         '                def _standalone_exit(*_args):\n'
         '                    self.app.pop_modal(); self.app.stop(); return True;\n'
-        '                restart=Button("Reiniciar", on_press=_standalone_restart, default=True);\n'
-        '                leave=Button("Salir", on_press=_standalone_exit);\n'
-        '                buttons=HBox(restart,leave,sizes=[None,None]);\n'
-        '                body=VBox(Label("Terminado"),buttons,sizes=[1,None]);\n'
-        '                self.app.push_modal(Dialog(body,title="Terminado",width=52,height=7,on_cancel=_standalone_exit));\n'
+        '                def _standalone_debug(*_args):\n'
+        '                    mode="full" if os.environ.get("SUM_RUNTIME_DEBUG", "").strip() == "1" else "critical-only";\n'
+        '                    self.app.pop_modal(); self._update_status("Debug output mode: {}".format(mode)); self.workspace.show(self.output_window); self.workspace.activate(self.output_window); self.app.invalidate(); return True;\n'
+        '                restart=Button("Restart Program", on_press=_standalone_restart, default=True);\n'
+        '                leave=Button("Exit", on_press=_standalone_exit);\n'
+        '                debug=Button("Debug", on_press=_standalone_debug);\n'
+        '                buttons=HBox(restart,leave,debug,sizes=[None,None,None]);\n'
+        '                body=VBox(Label("Program finished"),buttons,sizes=[1,None]);\n'
+        '                self.app.push_modal(Dialog(body,title="Program output",width=72,height=7,on_cancel=_standalone_exit));\n'
         '                self.app.focus.set(restart);\n'
         '            dirty = True;'
     );
@@ -676,7 +820,7 @@ def _patch_android_sumide_runtime(vendor):
 
 
 def _patch_android_sumx_runtime(vendor):
-    """Give standalone xBase APKs the same Restart/Exit completion contract.""";
+    """Give standalone xBase APKs the same Restart/Exit/Debug completion contract.""";
     source=Path(vendor) / "sumx" / "editor_app.py";
     if not source.exists(): return False;
     text=source.read_text(encoding="utf-8"); changed=False;
@@ -699,16 +843,22 @@ def _patch_android_sumx_runtime(vendor):
         '        if hasattr(self, "editor"):\n'
         '            self.app.focus.set(self.editor);\n'
         '            self._update_status("Run finished");\n'
+        '        if os.environ.get("SUM_FORCE_END", "").strip() == "1":\n'
+        '            self.app.stop(); return result;\n'
         '        if os.environ.get("SUM_STANDALONE_RUN", "").strip() == "1" and not self.app.modal_depth:\n'
         '            self.output_window.maximize(); self.workspace.show(self.output_window); self.workspace.activate(self.output_window);\n'
         '            def _standalone_restart(*_args):\n'
         '                self.app.pop_modal(); self.output_view.set_text(""); self.app.invalidate(); return self.run_program();\n'
         '            def _standalone_exit(*_args):\n'
         '                self.app.pop_modal(); self.app.stop(); return True;\n'
-        '            restart=Button("Reiniciar",on_press=_standalone_restart,default=True);\n'
-        '            leave=Button("Salir",on_press=_standalone_exit);\n'
-        '            body=VBox(Label("Terminado"),HBox(restart,leave,sizes=[None,None]),sizes=[1,None]);\n'
-        '            self.app.push_modal(Dialog(body,title="Terminado",width=52,height=7,on_cancel=_standalone_exit));\n'
+        '            def _standalone_debug(*_args):\n'
+        '                mode="full" if os.environ.get("SUM_RUNTIME_DEBUG", "").strip() == "1" else "critical-only";\n'
+        '                self.app.pop_modal(); self._update_status("Debug output mode: {}".format(mode)); self.workspace.show(self.output_window); self.workspace.activate(self.output_window); self.app.invalidate(); return True;\n'
+        '            restart=Button("Restart Program",on_press=_standalone_restart,default=True);\n'
+        '            leave=Button("Exit",on_press=_standalone_exit);\n'
+        '            debug=Button("Debug",on_press=_standalone_debug);\n'
+        '            body=VBox(Label("Program finished"),HBox(restart,leave,debug,sizes=[None,None,None]),sizes=[1,None]);\n'
+        '            self.app.push_modal(Dialog(body,title="Program output",width=72,height=7,on_cancel=_standalone_exit));\n'
         '            self.app.focus.set(restart);\n'
         '        return result;'
     );
@@ -789,13 +939,17 @@ def _stage_language_runtime(project,directory):
         'from sumide.app import {func};\n'
         'raise SystemExit({func}(["--gui","--run",str(ROOT / {src!r})]));\n'
     ).format(func=entry_func,src=source);
-    if bool(settings.get("standalone",False)) or language == "bash": wrapper=wrapper.replace("from sumide.app import", "os.environ.setdefault(\"SUM_STANDALONE_RUN\",\"1\");\nfrom sumide.app import",1);
+    runtime_debug=bool(settings.get("runtime_debug",False)); force_end=bool(settings.get("force_end",False));
+    flags='os.environ.setdefault("SUM_RUNTIME_DEBUG",{});\nos.environ.setdefault("SUM_FORCE_END",{});\n'.format(repr("1" if runtime_debug else "0"),repr("1" if force_end else "0"));
+    wrapper=wrapper.replace("from sumide.app import",flags+"from sumide.app import",1);
+    if (bool(settings.get("standalone",False)) or language == "bash") and not force_end: wrapper=wrapper.replace("from sumide.app import", "os.environ.setdefault(\"SUM_STANDALONE_RUN\",\"1\");\nfrom sumide.app import",1);
     (Path(directory) / "main.py").write_text(wrapper,encoding="utf-8");
-    return {"runtime":language,"packages":packages,"adapter":"sumide-gui-run","storage_root":"android-private+shared"};
+    return {"runtime":language,"packages":packages,"adapter":"sumide-gui-run","storage_root":"android-private+shared","runtime_debug":runtime_debug,"force_end":force_end};
 
 
 def _stage_android(project, directory):
     _copy_payload(project, directory);
+    _stage_android_compat(directory);
     entry=directory / project.entrypoint;
     if not entry.exists(): raise BuildError("entrypoint not staged: {}".format(project.entrypoint));
     settings=_android_settings(project);
@@ -811,11 +965,26 @@ def _stage_android(project, directory):
         try: model=transpile_sumgui_easy(original,directory / "main.py");
         except TranspileError as exc: raise BuildError(str(exc));
         return {"transpiled":True,"transpiler":"sumgui-easy","source":str(original),"model":model};
+    if project.language == "python":
+        _stage_android_output_browser(directory);
+        staged_name=project.entrypoint;
+        if project.entrypoint == "main.py":
+            staged_name="_sum_app_main.py"; shutil.copy2(str(entry),str(directory / staged_name));
+        debug=bool(settings.get("runtime_debug",False)); force_end=bool(settings.get("force_end",False));
+        source_text=entry.read_text(encoding="utf-8");
+        wrapper=(
+            'from pathlib import Path;\n'
+            'ROOT=Path(__file__).resolve().parent;\n'
+            'from sum_android_output import run_source;\n'
+            '_SOURCE={source!r};\n'
+            'raise SystemExit(run_source(_SOURCE,filename=str(ROOT / {entry!r}),debug={debug!r},force_end={force!r},title={title!r}));\n'
+        ).format(source=source_text,entry=project.entrypoint,debug=debug,force=force_end,title=project.name);
+        (directory / "main.py").write_text(wrapper,encoding="utf-8");
+        return {"transpiled":True,"transpiler":"sum-output-browser","source":str(entry),"runtime":{"adapter":"python-output-browser","runtime_debug":debug,"force_end":force_end}};
     if project.entrypoint != "main.py":
         wrapper='import runpy;\nrunpy.run_path({!r}, run_name="__main__");\n'.format(project.entrypoint);
         (directory / "main.py").write_text(wrapper,encoding="utf-8");
     return {"transpiled":False,"transpiler":None,"source":str(entry)};
-
 
 def _orientation(project):
     value=str(project.interface.get("orientation",_android_settings(project).get("orientation","auto"))).strip().lower();
@@ -889,6 +1058,21 @@ def _android_presplash(project, directory):
     if not source.exists(): raise BuildError("application presplash not found: {}".format(source));
     target=Path(directory) / ("app-presplash" + source.suffix.lower()); shutil.copy2(str(source),str(target)); return target;
 
+
+
+
+def _p4a_launcher():
+    """Run p4a from the same controlling Python environment as sumBuild.
+
+    python-for-android still creates its required hostpython/target toolchains,
+    but the orchestration process itself stays bound to ``sys.executable``.
+    Fall back to an external p4a command only when the module is unavailable
+    in the active Python environment.
+    """;
+    if importlib.util.find_spec("pythonforandroid") is not None:
+        return [sys.executable,"-c","from pythonforandroid.entrypoints import main; main();"];
+    executable=shutil.which("p4a");
+    return [executable or "p4a"];
 
 def _p4a_tool_version():
     try: return importlib.metadata.version("python-for-android");
@@ -1199,12 +1383,25 @@ diff '--color=auto' -uNr pandas/pandas/meson.build pandas.mod/pandas/meson.build
     return root.resolve();
 
 
+def _write_android_compat_recipe(directory):
+    """Override p4a's heavy android recipe with SUM's staged compatibility package.""";
+    root=Path(directory).parent / "p4a-local-recipes";
+    recipe_dir=root / "android"; recipe_dir.mkdir(parents=True,exist_ok=True);
+    recipe_text='#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n#pylint:disable=W0301\n#  \n#  Copyright 2018- William Martinez Bas <metfar@gmail.com>\n#  \n#  This program is free software; you can redistribute it and/or modify\n#  it under the terms of the GNU General Public License as published by\n#  the Free Software Foundation; either version 2 of the License, or\n#  (at your option) any later version.\n#  \n#  This program is distributed in the hope that it will be useful,\n#  but WITHOUT ANY WARRANTY; without even the implied warranty of\n#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n#  GNU General Public License for more details.\n#  \n#  You should have received a copy of the GNU General Public License\n#  along with this program; if not, write to the Free Software\n#  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,\n#  MA 02110-1301, USA.\n#  \nfrom pythonforandroid.recipe import Recipe\n\n\nclass AndroidCompatRecipe(Recipe):\n    name = "android"\n    version = "sum-compat-1"\n    url = None\n    depends = [("sdl3", "sdl2", "genericndkbuild"), "pyjnius"]\n\n    def should_build(self, arch):\n        return False\n\n    def build_arch(self, arch):\n        return None\n\n\nrecipe = AndroidCompatRecipe()\n';
+    (recipe_dir / "__init__.py").write_text(recipe_text,encoding="utf-8");
+    (recipe_dir / "SUM-ANDROID-COMPAT.txt").write_text(
+        "SUM supplies android.storage and android.loadingscreen from the private app source; this recipe only keeps p4a dependency resolution and pyjnius.\n",
+        encoding="utf-8",
+    );
+    return root.resolve();
+
+
 def _write_android_local_recipes(directory,requirements):
     root=Path(directory).parent / "p4a-local-recipes";
     if root.exists(): shutil.rmtree(str(root));
-    names={_android_requirement_name(item) for item in requirements};
-    if "pandas" in names: return _write_pandas_android_recipe(directory);
-    return None;
+    names={_android_requirement_name(item) for item in requirements}; created=False;
+    if "pandas" in names: _write_pandas_android_recipe(directory); created=True;
+    return root.resolve() if created else None;
 
 def _p4a_storage_from_command(command):
     for item in command:
@@ -1305,12 +1502,13 @@ def prepare_android(project, directory=None, backend=None, details=False):
     permissions=_android_permissions(project);
     icon=_android_icon(project,directory);
     presplash=_android_presplash(project,directory);
-    runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"icon":"sum" if icon and icon.name == "sum-default-icon.png" else (str(icon.name) if icon else None),"presplash":"sum" if presplash and presplash.name == "sum-presplash.png" else (str(presplash.name) if presplash else None),"font_size":project.interface.get("font_size","auto"),"font_auto":project.interface.get("font_auto",{}),"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto"}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"exit_button":project.interface.get("exit_button","auto"),"transpile":stage};
+    runtime={"screen":project.interface.get("screen","auto"),"orientation":orientation,"icon":"sum" if icon and icon.name == "sum-default-icon.png" else (str(icon.name) if icon else None),"presplash":"sum" if presplash and presplash.name == "sum-presplash.png" else (str(presplash.name) if presplash else None),"font_size":project.interface.get("font_size","auto"),"font_auto":project.interface.get("font_auto",{}),"keyboard":project.interface.get("keyboard",{"system":True,"accessory":"auto","show_hide":True,"reserve":"auto"}),"shortcuts":project.interface.get("shortcuts",{"exit":"F10","fullscreen":"ALT+ENTER"}),"exit_button":project.interface.get("exit_button","auto"),"runtime_debug":bool(settings.get("runtime_debug",False)),"force_end":bool(settings.get("force_end",False)),"end_policy":"force-end" if bool(settings.get("force_end",False)) else "output-browser","transpile":stage};
     (directory / "sum-android.json").write_text(__import__("json").dumps(runtime,indent=2,ensure_ascii=False)+"\n",encoding="utf-8");
     if selected == "p4a":
         storage=_p4a_profile_storage(project,requirements,arch);
+        record_profile(storage,{"profile_revision":SUM_P4A_PROFILE_REVISION,"requirements":requirements,"arch":arch,"api":str(settings.get("api",os.environ.get("ANDROIDAPI",33))),"ndk_api":str(settings.get("ndk_api",os.environ.get("NDKAPI",24))),"project":project.name});
         local_recipes=_write_android_local_recipes(directory,requirements);
-        command=["p4a","apk","--private",str(directory),"--package={}".format(package),"--name={}".format(project.name),"--version={}".format(project.version),"--bootstrap=sdl2","--requirements={}".format(",".join(requirements)),"--arch={}".format(arch),"--storage-dir={}".format(storage)];
+        command=_p4a_launcher()+["apk","--private",str(directory),"--package={}".format(package),"--name={}".format(project.name),"--version={}".format(project.version),"--bootstrap=sdl2","--requirements={}".format(",".join(requirements)),"--arch={}".format(arch),"--storage-dir={}".format(storage)];
         if local_recipes is not None: command.append("--local-recipes={}".format(local_recipes));
         if mode == "debug": command.append("--debug");
         if icon is not None: command.append("--icon={}".format(icon));
@@ -1388,7 +1586,7 @@ def build_android(project, prepare_only=False, backend=None):
         p4a_venv=_reset_p4a_transient_venv(env,p4a_storage);
         if p4a_venv.get("reset"): print("[INFO] reset python-for-android transient pip environment: {}".format(p4a_venv["path"]),file=sys.stderr);
     try:
-        subprocess.run(command,cwd=str(directory),check=True,env=env);
+        _run_external_build(command,directory,project,"android",selected,env=env,profile_path=p4a_storage);
     except subprocess.CalledProcessError as exc:
         raise BuildError("{} build failed with exit status {}".format(selected,exc.returncode)) from exc;
     finally:

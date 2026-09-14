@@ -501,7 +501,7 @@ def test_a28_full_runtime_core_requirements_keep_git_recipes_unversioned():
 
 def test_a28_profile_revision_and_recipe_tag_overrides():
     from sumbuild.backends import SUM_P4A_PROFILE_REVISION;
-    assert SUM_P4A_PROFILE_REVISION.startswith("a32-");
+    assert SUM_P4A_PROFILE_REVISION.startswith("a37-");
     import sumbuild.backends as backends;
     overrides=backends._android_recipe_version_overrides();
     assert overrides["VERSION_numpy"] == "v2.2.3";
@@ -583,9 +583,10 @@ def test_a31_source_cache_lock_rejects_live_owner_and_recovers_stale(tmp_path):
 
 
 
-def test_a32_android_full_runtime_includes_android_recipe():
+def test_a35_android_full_runtime_uses_pyjnius_not_p4a_android_recipe():
     from sumbuild.backends import SUM_ANDROID_CORE_REQUIREMENTS;
-    assert "android" in SUM_ANDROID_CORE_REQUIREMENTS;
+    assert "pyjnius" in SUM_ANDROID_CORE_REQUIREMENTS;
+    assert "android" not in SUM_ANDROID_CORE_REQUIREMENTS;
     source=(Path(__file__).resolve().parents[1]/"src"/"sumbuild"/"backends.py").read_text(encoding="utf-8");
     assert '("sumbasic","sumx","sumr","bash")' in source;
 
@@ -644,9 +645,10 @@ def test_a32_sumide_patch_maximizes_output_and_uses_private_temp(tmp_path):
     text=app.read_text(encoding="utf-8");
     assert "_sum_android_private_dir" in text;
     assert "self.output_window.maximize()" in text;
-    assert 'Button("Reiniciar"' in text;
-    assert 'Button("Salir"' in text;
-    assert 'title="Terminado"' in text;
+    assert 'Button("Restart Program"' in text;
+    assert 'Button("Debug"' in text;
+    assert 'Button("Exit"' in text;
+    assert 'title="Program output"' in text;
 
 
 def test_a32_sumedit_android_starts_clean_and_logs_crashes():
@@ -688,9 +690,10 @@ def test_a33_standalone_basic_completion_dialog_contract():
     root=Path(__file__).resolve().parents[1];
     source=(root/"src"/"sumbuild"/"android_runtime"/"sumbasic_ide.py").read_text(encoding="utf-8");
     assert 'SUM_STANDALONE_RUN' in source;
-    assert 'Button("Reiniciar"' in source;
-    assert 'Button("Salir"' in source;
-    assert 'title="Terminado"' in source;
+    assert 'Button("Restart Program"' in source;
+    assert 'Button("Debug"' in source;
+    assert 'Button("Exit"' in source;
+    assert 'title="Program output"' in source;
     assert 'return self.run_program()' in source;
     assert 'system_exit_requested' in source;
 
@@ -702,9 +705,10 @@ def test_a33_standalone_scriptide_patch_has_restart_exit(tmp_path):
     app.write_text('''import os\nfrom sumtui.widgets import Button, Dialog, HBox, Label, VBox\nclass X:\n    def f(self):\n            self._cleanup_process();\n            dirty = True;\n''',encoding="utf-8");
     assert backends._patch_android_sumide_runtime(vendor) is True;
     patched=app.read_text(encoding="utf-8");
-    assert 'Button("Reiniciar"' in patched;
-    assert 'Button("Salir"' in patched;
-    assert 'title="Terminado"' in patched;
+    assert 'Button("Restart Program"' in patched;
+    assert 'Button("Debug"' in patched;
+    assert 'Button("Exit"' in patched;
+    assert 'title="Program output"' in patched;
     assert 'return self.run_program()' in patched;
 
 
@@ -715,3 +719,214 @@ def test_a33_language_wrapper_marks_single_source_standalone():
     assert 'SUM_STANDALONE_RUN' in source;
     assert 'setdefault(\\"SUM_STANDALONE_RUN\\",\\"1\\")' in source;
     assert '_patch_android_sumx_runtime(vendor)' in source;
+
+
+def test_a35_android_requirement_maps_to_pyjnius_and_private_shim_is_staged(tmp_path):
+    import py_compile;
+    import sumbuild.backends as backends;
+    from sumbuild.project import project_from_main;
+    source=tmp_path/"main.py"; source.write_text('print("hello")\n',encoding="utf-8");
+    project=project_from_main(source,target="android");
+    project.build["android"]["requirements"]=["python3","sdl2","android"];
+    directory,command=backends.prepare_android(project,directory=tmp_path/"stage",backend="p4a");
+    req=next(x for x in command if x.startswith("--requirements="));
+    values=req.split("=",1)[1].split(",");
+    assert "android" not in values;
+    assert "pyjnius" in values;
+    assert not any((Path(x.split("=",1)[1])/"android").exists() for x in command if x.startswith("--local-recipes="));
+    for name in ("__init__.py","storage.py","loadingscreen.py"):
+        path=directory/"android"/name; assert path.exists(); py_compile.compile(str(path),doraise=True);
+    storage=(directory/"android"/"storage.py").read_text(encoding="utf-8");
+    loading=(directory/"android"/"loadingscreen.py").read_text(encoding="utf-8");
+    assert "ANDROID_PRIVATE" in storage;
+    assert 'autoclass("org.kivy.android.PythonActivity")' in loading;
+
+
+def test_a35_bumps_profile_to_avoid_reusing_android_recipe_dist():
+    from sumbuild.backends import SUM_P4A_PROFILE_REVISION;
+    assert SUM_P4A_PROFILE_REVISION == "a37-entrypoint-storage-exit-1";
+
+
+def test_a35_p4a_launcher_prefers_active_python_environment(monkeypatch):
+    import sys;
+    import sumbuild.backends as backends;
+    original=backends.importlib.util.find_spec;
+    monkeypatch.setattr(backends.importlib.util,"find_spec",lambda name: object() if name == "pythonforandroid" else original(name));
+    command=backends._p4a_launcher();
+    assert command[0] == sys.executable;
+    assert command[1] == "-c";
+    assert "pythonforandroid.entrypoints" in command[2];
+
+
+def test_a35_p4a_launcher_falls_back_to_path(monkeypatch):
+    import sumbuild.backends as backends;
+    original=backends.importlib.util.find_spec;
+    monkeypatch.setattr(backends.importlib.util,"find_spec",lambda name: None if name == "pythonforandroid" else original(name));
+    monkeypatch.setattr(backends.shutil,"which",lambda name: "/tmp/p4a" if name == "p4a" else None);
+    assert backends._p4a_launcher() == ["/tmp/p4a"];
+
+
+def test_a36_cli_cache_session_and_runtime_flags():
+    from sumbuild.cli import _parser;
+    parser=_parser();
+    assert parser.parse_args(["-l"]).list_all is True;
+    assert parser.parse_args(["--ps"]).list_active is True;
+    assert parser.parse_args(["--killall"]).kill_all is True;
+    args=parser.parse_args(["--main","demo.py","--target","android","--debug","--force-end"]);
+    assert args.shortcut_debug is True;
+    assert args.shortcut_force_end is True;
+
+
+def test_a36_project_from_main_records_runtime_end_policy(tmp_path):
+    from sumbuild.project import project_from_main;
+    main=tmp_path/"demo.py"; main.write_text('print("ok")\n',encoding="utf-8");
+    project=project_from_main(main,target="android",debug=True,force_end=True);
+    android=project.build["android"];
+    assert android["runtime_debug"] is True;
+    assert android["force_end"] is True;
+
+
+def test_a36_generic_python_stages_output_browser(tmp_path):
+    import json;
+    from sumbuild.backends import prepare_android;
+    main=tmp_path/"main.py"; main.write_text('print("hello")\n',encoding="utf-8");
+    manifest=tmp_path/"project.sum";
+    manifest.write_text(json.dumps({"sum_project":1,"name":"demo","entrypoint":"main.py","language":"python","sources":["main.py"],"build":{"android":{"backend":"p4a","requirements":["python3","sdl2","pyjnius"],"runtime_debug":True,"force_end":False}}}),encoding="utf-8");
+    directory,command=prepare_android(manifest,backend="p4a");
+    assert (directory/"sum_android_output.py").exists();
+    wrapper=(directory/"main.py").read_text(encoding="utf-8");
+    assert "from sum_android_output import run_source" in wrapper;
+    assert "debug=True" in wrapper;
+    assert "force_end=False" in wrapper;
+    runtime=json.loads((directory/"sum-android.json").read_text(encoding="utf-8"));
+    assert runtime["end_policy"] == "output-browser";
+
+
+def test_a36_output_record_filters_noncritical_stderr():
+    from sumbuild.android_runtime.output_browser import OutputRecord;
+    record=OutputRecord(debug=False);
+    record.add("stdout","visible\n");
+    record.add("stderr","warning\n");
+    record.add("critical","fatal\n",True);
+    normal="\n".join(row[1] for row in record.lines(False));
+    debug="\n".join(row[1] for row in record.lines(True));
+    assert "visible" in normal;
+    assert "fatal" in normal;
+    assert "warning" not in normal;
+    assert "warning" in debug;
+    assert "[stderr]" in debug;
+
+
+def test_a36_cache_current_old_and_removal(tmp_path,monkeypatch):
+    import sumbuild.cache as cache;
+    monkeypatch.setattr(cache.Path,"home",classmethod(lambda cls: tmp_path));
+    first=cache.p4a_root()/"first"; second=cache.p4a_root()/"second";
+    cache.record_profile(first,{"profile_revision":"a35-old"});
+    cache.record_profile(second,{"profile_revision":"a36-current"});
+    assert [row["profile_id"] for row in cache.list_profiles("current")] == ["second"];
+    assert [row["profile_id"] for row in cache.list_profiles("old")] == ["first"];
+    result=cache.remove_profiles("old");
+    assert result["removed"] == ["first"];
+    assert not first.exists();
+    assert second.exists();
+
+
+def test_a36_docs_are_consolidated_and_readme_ends_cleanly():
+    root=Path(__file__).resolve().parents[1];
+    assert (root/"readme.md").exists();
+    assert (root/"changes.md").exists();
+    assert not list(root.glob("README-a*.md"));
+    text=(root/"readme.md").read_text(encoding="utf-8").rstrip();
+    assert text.endswith('<p align=center><b>- oOo -</b></p>');
+    assert "0.1.0a37" in text;
+
+
+def test_a36_sumbasic_force_end_and_three_actions_are_staged():
+    root=Path(__file__).resolve().parents[1];
+    source=(root/"src"/"sumbuild"/"android_runtime"/"sumbasic_ide.py").read_text(encoding="utf-8");
+    assert 'SUM_FORCE_END' in source;
+    assert 'Button("Restart Program"' in source;
+    assert 'Button("Exit"' in source;
+    assert 'Button("Debug"' in source;
+
+
+
+def test_a37_nuitka_defaults_to_onefile_no_qt_and_natural_import_graph(tmp_path):
+    from sumbuild.project import project_from_main;
+    source=tmp_path/"science_stack.py"; source.write_text("import numpy, pandas, matplotlib\n",encoding="utf-8");
+    project=project_from_main(source,target="linux",backend="nuitka");
+    staging,command,backend=prepare_host(project,backend="nuitka");
+    assert backend == "nuitka";
+    assert "--onefile" in command;
+    assert "--enable-plugin=no-qt" in command;
+    assert not any(item.startswith("--include-package=sum") for item in command);
+    assert not any(item.startswith("--include-package=numpy") for item in command);
+
+
+def test_a37_host_onedir_is_explicit_and_not_called_standalone_in_cli(tmp_path):
+    root=tmp_path/"demo"; project=SumProject.create(root,"demo");
+    (root/"main.py").write_text("print(1)\n",encoding="utf-8");
+    _staging,command,_backend=prepare_host(project,backend="nuitka",layout="onedir");
+    assert "--standalone" in command;
+    assert "--onefile" not in command;
+    from sumbuild.cli import _parser;
+    args=_parser().parse_args(["--main",str(root/"main.py"),"--target","linux","--onedir","--prepare"]);
+    assert args.shortcut_layout == "onedir";
+
+
+def test_a37_qt_project_does_not_force_no_qt(tmp_path):
+    import json;
+    root=tmp_path/"qt"; root.mkdir();
+    (root/"main.py").write_text("from PySide6.QtWidgets import QApplication\n",encoding="utf-8");
+    (root/"project.sum").write_text(json.dumps({"sum_project":1,"name":"qt","entrypoint":"main.py","sources":["main.py"],"dependencies":["PySide6"],"build":{"host":{"backend":"nuitka"}}}),encoding="utf-8");
+    _staging,command,_backend=prepare_host(root,backend="nuitka");
+    assert "--enable-plugin=no-qt" not in command;
+
+
+def test_a37_android_python_wrapper_embeds_entrypoint(tmp_path,monkeypatch):
+    import json;
+    import sumbuild.backends as backends;
+    root=tmp_path/"demo"; root.mkdir();
+    (root/"science_stack.py").write_text('print("embedded-ok")\n',encoding="utf-8");
+    (root/"project.sum").write_text(json.dumps({"sum_project":1,"name":"science_stack","entrypoint":"science_stack.py","language":"python","sources":["science_stack.py"],"build":{"android":{"backend":"p4a","requirements":["python3","sdl2"]}}}),encoding="utf-8");
+    monkeypatch.setattr(backends,"_stage_python_sum_runtime",lambda project,directory: None);
+    directory=tmp_path/"stage"; directory.mkdir();
+    stage=backends._stage_android(SumProject.load(root),directory);
+    wrapper=(directory/"main.py").read_text(encoding="utf-8");
+    assert "run_source" in wrapper;
+    assert "embedded-ok" in wrapper;
+    assert "run_path(ROOT" not in wrapper;
+    assert stage["runtime"]["adapter"] == "python-output-browser";
+
+
+def test_a37_sumide_debug_dismisses_modal_and_open_defaults_private(tmp_path):
+    import sumbuild.backends as backends;
+    vendor=tmp_path/"vendor"; package=vendor/"sumide"; package.mkdir(parents=True);
+    app=package/"app.py";
+    app.write_text(
+        'import os, tempfile\nfrom pathlib import Path\n\nclass _RSession: pass\n\n'
+        'class Demo:\n'
+        '    def paths(self):\n'
+        '        start = self.document.path.parent if self.document.path is not None else Path.cwd();\n'
+        '        directory = self.document.path.parent if self.document.path is not None else Path.cwd();\n'
+        '        return Path.cwd() / ("untitled" + suffix);\n'
+        '    def poll(self):\n'
+        '            self._cleanup_process();\n'
+        '            dirty = True;\n',
+        encoding="utf-8",
+    );
+    backends._patch_android_sumide_runtime(vendor);
+    text=app.read_text(encoding="utf-8");
+    assert 'else _sum_android_private_dir();' in text;
+    assert 'self.app.pop_modal(); self._update_status("Debug output mode:' in text;
+
+
+def test_a37_sumgui_easy_has_visible_exit_button(tmp_path):
+    from sumbuild.transpile import transpile_sumgui_easy;
+    source=tmp_path/"main.py";
+    source.write_text('from sumgui.easy import button, start, window\nwindow("Demo", width=640, height=360, base_width=640, base_height=360)\nbutton("PRESS", 10, 10, 120, 50)\nstart()\n',encoding="utf-8");
+    output=tmp_path/"android.py"; transpile_sumgui_easy(source,output);
+    text=output.read_text(encoding="utf-8");
+    assert 'def _exit_button():' in text;
+    assert '_text(renderer,"EXIT"' in text;
+    assert 'pressed="exit"' in text;

@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sumbuild"
-version = "0.1.0a33"
+version = "0.1.0a37"
 description = "Project packaging and executable/APK build orchestration for the Sum ecosystem."
-readme = "README.md"
+readme = "readme.md"
 requires-python = ">=3.8"
 license = { text = "GPL-2.0-or-later" }
 authors = [{ name = "William Martinez Bas", email = "metfar@gmail.com" }]

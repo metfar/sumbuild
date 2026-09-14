@@ -227,6 +227,10 @@ def _text(renderer,text,x,y,size=18,color=(240,240,240)):
 def _inside(widget,x,y):
     return widget["x"] <= x < widget["x"]+widget["w"] and widget["y"] <= y < widget["y"]+widget["h"];
 
+def _exit_button():
+    ww=MODEL["window"]["width"]; hh=MODEL["window"]["height"];
+    return {"x":max(8,ww-132),"y":max(8,hh-64),"w":120,"h":48};
+
 def _draw(renderer,pressed,alert):
     _rgb(renderer,(0,0,0)); lib.SDL_RenderClear(renderer);
     for index,w in enumerate(MODEL["widgets"]):
@@ -239,6 +243,10 @@ def _draw(renderer,pressed,alert):
         ww=MODEL["window"]["width"]; hh=MODEL["window"]["height"]; bw=min(520,ww-40); bh=min(180,hh-40); bx=(ww-bw)//2; by=(hh-bh)//2;
         _fill(renderer,0,0,ww,hh,(20,20,20)); _fill(renderer,bx,by,bw,bh,(20,35,55)); _border(renderer,bx,by,bw,bh,(255,220,0));
         _text(renderer,alert.get("title","SUMGUI"),bx+20,by+20,20,(255,220,0)); _text(renderer,alert.get("message",""),bx+20,by+65,16,(255,255,255)); _text(renderer,"TAP TO CLOSE",bx+20,by+125,14,(180,220,255));
+    else:
+        e=_exit_button(); color=(150,55,55) if pressed=="exit" else (80,38,38);
+        _fill(renderer,e["x"],e["y"],e["w"],e["h"],color); _border(renderer,e["x"],e["y"],e["w"],e["h"],(255,255,255));
+        _text(renderer,"EXIT",e["x"]+28,e["y"]+14,16,(255,255,255));
     lib.SDL_RenderPresent(renderer);
 
 def main():
@@ -271,10 +279,16 @@ def main():
                 elif event.type == SDL_MOUSEBUTTONDOWN:
                     if alert: alert=None;
                     else:
-                        for index,w in enumerate(MODEL["widgets"]):
-                            if w["kind"]=="button" and _inside(w,event.button.x,event.button.y): pressed=index; break;
+                        exit_button=_exit_button();
+                        if _inside(exit_button,event.button.x,event.button.y): pressed="exit";
+                        else:
+                            for index,w in enumerate(MODEL["widgets"]):
+                                if w["kind"]=="button" and _inside(w,event.button.x,event.button.y): pressed=index; break;
                 elif event.type == SDL_MOUSEBUTTONUP:
-                    if pressed is not None:
+                    if pressed == "exit":
+                        if _inside(_exit_button(),event.button.x,event.button.y): running=False;
+                        pressed=None;
+                    elif pressed is not None:
                         w=MODEL["widgets"][pressed];
                         if _inside(w,event.button.x,event.button.y): alert=w.get("alert");
                         pressed=None;
