@@ -42,7 +42,7 @@ class BuildError(RuntimeError):
 
 SUM_ECOSYSTEM_PACKAGES=(
     "sumcore","sumdata","sumplot","sumr","sumpy","sumui","sumtui",
-    "sumgui","sumide","sumbasic","sumx","sumdiff","sumdoc","sumkeyboard",
+    "sumgui","sumide","sumbasic","sumbash","sumx","sumdiff","sumdoc","sumkeyboard",
 );
 
 # Backwards-compatible name used by the Android staging code/tests.
@@ -913,7 +913,7 @@ def _stage_language_runtime(project,directory):
         "sumbasic":(("sumbasic","sumui","sumtui","sumide","sumkeyboard"),"main_basic"),
         "sumx":(("sumx","sumui","sumtui","sumide","sumkeyboard"),"main_xbase"),
         "sumr":(("sumr","sumui","sumtui","sumide"),"main_r"),
-        "bash":(("sumui","sumtui","sumide"),"main_bash"),
+        "bash":(("sumbash","sumui","sumtui","sumide"),"main_bash"),
     };
     if language not in bundles: raise BuildError("Android runtime adapter is not defined for language={}".format(language));
     required,entry_func=bundles[language];

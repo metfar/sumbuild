@@ -140,7 +140,7 @@ def _main_source_profile(path,language):
     if "sumide" in text: return "sumide";
     if "sumbasic" in text: return "sumbasic";
     if "sumx" in text: return "sumx";
-    if any(token in text for token in ("sumgui","sumui","sumtui","sumcore","sumdata","sumplot","sumpy","sumr","sumdiff","sumdoc","sumkeyboard")):
+    if any(token in text for token in ("sumgui","sumui","sumtui","sumcore","sumdata","sumplot","sumpy","sumr","sumdiff","sumdoc","sumkeyboard","sumbash")):
         return "sum-full";
     return "generic";
 
@@ -154,7 +154,7 @@ def project_from_main(path,name=None,target="host",backend=None,storage="auto",d
     target=str(target or "host").lower();
     storage=str(storage or "auto").lower();
     if storage not in ("auto","all-files","scoped","none"): raise ProjectError("storage expects auto, all-files, scoped, or none");
-    if storage == "auto": storage="all-files" if profile in ("sumide","sum-full","sumbasic","sumx","sumr") else "scoped";
+    if storage == "auto": storage="all-files" if profile in ("sumide","sum-full","sumbasic","sumx","sumr","bash","sumbash") else "scoped";
     science=["numpy","pandas","matplotlib"];
     runtime_requirements={
         "python":["python3","sdl2","rich"] + science,

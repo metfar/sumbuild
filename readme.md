@@ -1,6 +1,6 @@
 # sumBuild
 
-`sumBuild` packages SUM projects and builds Linux executables or Android APKs. The current release is **0.1.0a38**. The Android backend defaults to `python-for-android` and keeps toolchain discovery local-first: existing SDK, NDK, API and Java settings are respected instead of installing or replacing toolchains behind the user's back.
+`sumBuild` packages SUM projects and builds Linux executables or Android APKs. The current release is **0.1.0a39**. The Android backend defaults to `python-for-android` and keeps toolchain discovery local-first: existing SDK, NDK, API and Java settings are respected instead of installing or replacing toolchains behind the user's back.
 
 ## Install
 
@@ -12,7 +12,11 @@ hash -r
 sumbuild --version
 ```
 
-The final command should report `sumbuild 0.1.0a38`.
+The final command should report `sumbuild 0.1.0a39`.
+
+## sumbash runtime integration
+
+The full SUM runtime package set now includes `sumbash`. Bash-language Android staging carries the shell package alongside the existing IDE/runtime support, and Bash/sumbash projects use the development-runtime shared-storage policy. The standalone Android shell presentation remains an incremental follow-up; this release establishes packaging/runtime availability rather than claiming a finished Android terminal shell.
 
 ## Quick builds
 

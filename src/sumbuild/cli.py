@@ -101,7 +101,7 @@ def _project_with_build_overrides(project,name=None,storage=None,debug=None,forc
         if value not in ("auto","all-files","scoped","none"): raise BuildError("--storage expects auto, all-files, scoped, or none");
         if value == "auto":
             runtime=str(android.get("runtime","") or data.get("language","")).strip().lower();
-            value="all-files" if runtime in ("sumide","sum-runtime","sum-full","sumbasic","sumx","sumr") else "scoped";
+            value="all-files" if runtime in ("sumide","sum-runtime","sum-full","sumbasic","sumx","sumr","bash","sumbash") else "scoped";
         android["storage_access"]=value;
     if debug is not None: android["runtime_debug"]=bool(debug);
     if force_end is not None: android["force_end"]=bool(force_end);

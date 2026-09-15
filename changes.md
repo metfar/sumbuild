@@ -1,6 +1,12 @@
-# sumBuild 0.1.0a38
+# sumBuild 0.1.0a39
 
-This alpha is the release-candidate cleanup after the first a37 device tests.
+This alpha is the release-candidate cleanup after the first a37 device tests and adds the first concrete `sumbash` runtime to full SUM bundles.
+
+## sumbash integration
+
+- `sumbash` is part of the SUM ecosystem package set used by full host and Android runtime staging.
+- Bash-language Android bundles include the `sumbash` package alongside the existing IDE/runtime support.
+- Automatic shared-storage policy treats Bash/sumbash runtimes as development runtimes rather than generic scoped-storage apps.
 
 ## Android target and runtime output
 
