@@ -138,7 +138,7 @@ def test_android_runtime_wrapper_exports_vendor_pythonpath():
 
 def test_android_runtime_bundles_sum_ecosystem():
     from sumbuild.backends import SUM_ANDROID_ECOSYSTEM_PACKAGES, SUM_ANDROID_CORE_REQUIREMENTS;
-    for name in ("sumcore","sumui","sumtui","sumgui","sumide","sumbasic","sumbash","sumx","sumr","sumpy","sumdata","sumplot","sumkeyboard"):
+    for name in ("sumcore","sumfsa","sumio","sumui","sumtui","sumgui","sumide","sumbasic","sumbash","sumterminal","sumx","sumr","sumpy","sumdata","sumplot","sumkeyboard"):
         assert name in SUM_ANDROID_ECOSYSTEM_PACKAGES;
     for name in ("python3","sdl2","rich","pygments","markdown-it-py"):
         assert name in SUM_ANDROID_CORE_REQUIREMENTS;
@@ -838,7 +838,7 @@ def test_a36_docs_are_consolidated_and_readme_ends_cleanly():
     assert not list(root.glob("README-a*.md"));
     text=(root/"readme.md").read_text(encoding="utf-8").rstrip();
     assert text.endswith('<p align=center><b>- oOo -</b></p>');
-    assert "0.1.0a39" in text;
+    assert "0.1.0a41" in text;
 
 
 def test_a36_sumbasic_force_end_and_three_actions_are_staged():
@@ -986,7 +986,7 @@ def test_a38_build_summary_contains_size_hash_and_result(tmp_path,capsys):
 def test_a38_docs_mention_api36_and_hybrid_output_capture():
     root=Path(__file__).resolve().parents[1];
     readme=(root / "readme.md").read_text(encoding="utf-8"); changes=(root / "changes.md").read_text(encoding="utf-8");
-    assert "0.1.0a39" in readme;
+    assert "0.1.0a41" in readme;
     assert "API 36" in changes;
     assert "sys.stdout" in changes and "sys.stderr" in changes;
     assert readme.rstrip().endswith('<p align=center><b>- oOo -</b></p>');

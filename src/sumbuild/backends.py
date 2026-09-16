@@ -41,8 +41,8 @@ class BuildError(RuntimeError):
 
 
 SUM_ECOSYSTEM_PACKAGES=(
-    "sumcore","sumdata","sumplot","sumr","sumpy","sumui","sumtui",
-    "sumgui","sumide","sumbasic","sumbash","sumx","sumdiff","sumdoc","sumkeyboard",
+    "sumcore","sumfsa","sumio","sumdata","sumplot","sumr","sumpy","sumui","sumtui",
+    "sumgui","sumide","sumbasic","sumbash","sumterminal","sumx","sumdiff","sumdoc","sumkeyboard",
 );
 
 # Backwards-compatible name used by the Android staging code/tests.

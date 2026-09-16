@@ -140,7 +140,7 @@ def _main_source_profile(path,language):
     if "sumide" in text: return "sumide";
     if "sumbasic" in text: return "sumbasic";
     if "sumx" in text: return "sumx";
-    if any(token in text for token in ("sumgui","sumui","sumtui","sumcore","sumdata","sumplot","sumpy","sumr","sumdiff","sumdoc","sumkeyboard","sumbash")):
+    if any(token in text for token in ("sumgui","sumui","sumtui","sumcore","sumfsa","sumio","sumdata","sumplot","sumpy","sumr","sumdiff","sumdoc","sumkeyboard","sumbash","sumterminal")):
         return "sum-full";
     return "generic";
 

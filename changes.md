@@ -1,4 +1,14 @@
-# sumBuild 0.1.0a39
+## 0.1.0a41 - sumTerminal staging
+
+- Adds `sumterminal` to coordinated SUM runtime staging.
+- Keeps the terminal engine dependent on sumFSA/sumIO/sumbash without claiming a finished Android or Windows terminal frontend.
+
+## 0.1.0a40 - sumFSA / sumIO staging
+
+- Adds `sumfsa` and `sumio` to the coordinated SUM runtime package set used by host/Android staging.
+- Keeps storage and I/O as independent infrastructure packages; terminal/session presentation remains a later layer.
+
+# sumBuild 0.1.0a40
 
 This alpha is the release-candidate cleanup after the first a37 device tests and adds the first concrete `sumbash` runtime to full SUM bundles.
 
