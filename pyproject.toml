@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sumbuild"
-version = "0.1.0a41"
+version = "0.1.0a42"
 description = "Project packaging and executable/APK build orchestration for the Sum ecosystem."
 readme = "readme.md"
 requires-python = ">=3.8"

@@ -990,3 +990,24 @@ def test_a38_docs_mention_api36_and_hybrid_output_capture():
     assert "API 36" in changes;
     assert "sys.stdout" in changes and "sys.stderr" in changes;
     assert readme.rstrip().endswith('<p align=center><b>- oOo -</b></p>');
+
+
+def test_sum_icon_labels_use_spectrum_style_grid():
+    from types import SimpleNamespace;
+    from sumbuild.backends import _derive_icon_label, _icon_grid;
+    basic=SimpleNamespace(name="sumbasic",interface={});
+    bash=SimpleNamespace(name="sumbash",interface={});
+    birthday=SimpleNamespace(name="happy_birthday",interface={});
+    assert _derive_icon_label(basic) == "bas";
+    assert _icon_grid(_derive_icon_label(basic)) == ("Σb","as");
+    assert _derive_icon_label(bash) == "sh";
+    assert _icon_grid(_derive_icon_label(bash)) == ("Σ ","sh");
+    assert _derive_icon_label(birthday) == "hb";
+    assert _icon_grid(_derive_icon_label(birthday)) == ("Σ ","hb");
+
+
+def test_sum_icon_label_can_be_overridden():
+    from types import SimpleNamespace;
+    from sumbuild.backends import _derive_icon_label;
+    project=SimpleNamespace(name="very_long_application",interface={"icon_label":"xyz"});
+    assert _derive_icon_label(project) == "xyz";
