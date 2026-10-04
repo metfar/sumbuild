@@ -110,15 +110,24 @@ def _host_runtime_entry(project,directory):
     if language not in launchers:
         raise BuildError("Linux runtime adapter is not defined for language={}".format(language));
     source_name=project.entrypoint;
-    wrapper=(
-        'import os,sys;\n'
-        'from pathlib import Path;\n'
-        'ROOT=Path(__file__).resolve().parent;\n'
-        'os.environ.setdefault("SUM_GUI_BACKEND","sdl2");\n'
-        'os.environ.setdefault("SUM_AUDIO_BACKEND","sdl2");\n'
-        'from sumide.app import {func};\n'
-        'raise SystemExit({func}(["--gui","--run",str(ROOT / {src!r})]));\n'
-    ).format(func=launchers[language],src=source_name);
+    if language == "sumbasic":
+        wrapper=(
+            'import sys;\n'
+            'from pathlib import Path;\n'
+            'from sumbasic.cli import main;\n'
+            'ROOT=Path(__file__).resolve().parent;\n'
+            'raise SystemExit(main(["--run",str(ROOT / {src!r})]+sys.argv[1:]));\n'
+        ).format(src=source_name);
+    else:
+        wrapper=(
+            'import os,sys;\n'
+            'from pathlib import Path;\n'
+            'ROOT=Path(__file__).resolve().parent;\n'
+            'os.environ.setdefault("SUM_GUI_BACKEND","sdl2");\n'
+            'os.environ.setdefault("SUM_AUDIO_BACKEND","sdl2");\n'
+            'from sumide.app import {func};\n'
+            'raise SystemExit({func}(["--gui","--run",str(ROOT / {src!r})]));\n'
+        ).format(func=launchers[language],src=source_name);
     main=directory / "_sum_linux_main.py";
     main.write_text(wrapper,encoding="utf-8");
     return main;
@@ -134,7 +143,7 @@ def _host_full_bundle(project):
     """;
     settings=_host_settings(project);
     bundle=str(settings.get("bundle","auto") or "auto").strip().lower();
-    return bundle in ("sum-full","sum-runtime","full","sumide") or project.language in ("sumbasic","sumx","sumr","bash");
+    return bundle in ("sum-full","sum-runtime","full","sumide") ;
 
 
 def _check_host_bundle_modules():
