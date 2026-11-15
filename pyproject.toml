@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sumbuild"
-version = "0.1.0a43"
+version = "0.1.0a45"
 description = "Project packaging and executable/APK build orchestration for the Sum ecosystem."
 readme = "readme.md"
 requires-python = ">=3.8"
 license = { text = "GPL-2.0-or-later" }
 authors = [{ name = "William Martinez Bas", email = "metfar@gmail.com" }]
-dependencies = []
+dependencies = ["sumui>=0.1.0a22", ]
 classifiers = ["Development Status :: 3 - Alpha", "Programming Language :: Python :: 3"]
 
 [project.scripts]

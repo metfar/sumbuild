@@ -21,6 +21,7 @@
 #  
 """sumbuild command line.""";
 import argparse;
+from sumui.cli import SumArgumentParser;
 import hashlib;
 import importlib.metadata;
 import json;
@@ -36,7 +37,7 @@ from .project import PROJECT_FILENAME, ProjectError, SumProject, project_from_ma
 
 
 def _parser():
-    parser=argparse.ArgumentParser(prog="sumbuild",description="SUM project packaging and build orchestrator.");
+    parser=SumArgumentParser(prog="sumbuild",description="SUM project packaging and build orchestrator.");
     parser.add_argument("--version",action="version",version="sumbuild {}".format(__version__));
     parser.add_argument("--doctor",action="store_true",dest="doctor_flag",help="check build dependencies");
     parser.add_argument("--doctor-json",action="store_true",dest="doctor_json",help="check build dependencies as JSON");
